@@ -17,9 +17,9 @@ import { errorText } from "@/lib/ledger";
 
 type SignedIn = { token: string; account: CounterPublic };
 
-export function BrandMark() {
+export function BrandMark({ className = "size-16" }: { className?: string }) {
   return (
-    <img src="/shop-mark.jpg" alt="" width={72} height={72} className="size-16 shrink-0 rounded-lg bg-ink" />
+    <img src="/shop-mark.jpg" alt="" width={72} height={72} className={`${className} shrink-0 rounded-md bg-ink object-cover`} />
   );
 }
 

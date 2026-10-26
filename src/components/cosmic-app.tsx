@@ -148,17 +148,17 @@ function Desk({ account }: { account: CounterPublic }) {
   return (
     <div className="min-h-dvh bg-paper text-ink">
       <header className="bg-ink text-paper">
-        <div className="mx-auto flex w-full max-w-5xl flex-col items-center px-4 py-5 text-center sm:px-6">
-          <button type="button" onClick={goHome} className="flex flex-col items-center gap-2" aria-label="Home">
-            <BrandMark />
-            <span>
-              <span className="block font-display text-3xl leading-none tracking-tight text-paper">Cosmic World</span>
-              <span className="mt-1.5 block text-sm font-semibold tracking-[0.18em] text-sign">FANCY & COSMETICS</span>
+        <div className="mx-auto flex w-full max-w-5xl items-center gap-2 px-3 py-1.5 sm:px-4">
+          <button type="button" onClick={goHome} className="flex min-w-0 items-center gap-2 text-left" aria-label="Home">
+            <BrandMark className="size-9" />
+            <span className="min-w-0">
+              <span className="block truncate font-display text-lg leading-none tracking-tight text-paper">Cosmic World</span>
+              <span className="mt-0.5 block truncate text-[10px] font-semibold tracking-[0.14em] text-sign">FANCY & COSMETICS</span>
             </span>
           </button>
-          <div className="no-print mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
-            {today ? <p className="text-sm font-medium text-paper">{longDate(today)}</p> : null}
-            <p className="max-w-48 truncate text-sm font-medium text-paper">
+          <div className="no-print ml-auto flex shrink-0 items-center gap-2">
+            <p className="hidden text-xs font-medium text-paper sm:block">{today ? longDate(today) : ""}</p>
+            <p className="max-w-28 truncate text-xs font-medium text-paper">
               {admin ? "Admin" : "Staff"} · {account.username}
             </p>
             <button
@@ -168,29 +168,29 @@ function Desk({ account }: { account: CounterPublic }) {
                 setSignOutError("");
                 signOut.mutate();
               }}
-              className="h-11 rounded-sm bg-paper px-3 text-sm font-medium text-ink disabled:opacity-50"
+              className="h-8 rounded-sm bg-paper px-2.5 text-xs font-medium text-ink disabled:opacity-50"
             >
-              {signOut.isPending ? "Signing out…" : "Sign out"}
+              {signOut.isPending ? "…" : "Sign out"}
             </button>
           </div>
         </div>
-        <div className="h-1.5 bg-sign" />
+        <div className="h-1 bg-sign" />
       </header>
-      <div className="app-pad mx-auto w-full max-w-5xl px-4 pt-6 sm:px-6">
+      <div className="app-pad mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6">
         {signOutError ? (
           <p className="mt-3 text-sm text-danger" role="alert">
             {signOutError}
           </p>
         ) : null}
 
-        <div className="no-print mt-5 hidden lg:block">
+        <div className="no-print mt-2 hidden lg:block">
           <TabSwitch tab={tab} tabs={tabs} onTab={setTab} variant="track" />
         </div>
 
         {!today || !workDate || !bookAnchor ? (
           <p className="mt-8 text-sm text-muted">Loading the counter book…</p>
         ) : tab === "books" && admin ? (
-          <div className="mt-6">
+          <div className="mt-3">
             <BooksView
               anchor={bookAnchor}
               grain={grain}
@@ -206,11 +206,11 @@ function Desk({ account }: { account: CounterPublic }) {
         ) : tab === "staff" && admin ? (
           <StaffDesk />
         ) : tab === "bill" ? (
-          <div className="mt-6">
+          <div className="mt-3">
             <BillForm today={today} />
           </div>
         ) : (
-          <div className="app-grid mt-6">
+          <div className="app-grid mt-3">
             {tab === "bank" ? (
               <BankForm
                 date={workDate}
