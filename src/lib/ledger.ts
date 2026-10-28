@@ -4,6 +4,7 @@ import {
   addYears,
   endOfMonth,
   endOfYear,
+  differenceInCalendarDays,
   format,
   parseISO,
   startOfMonth,
@@ -395,6 +396,77 @@ export function centreBreakdown(
     margin: centsToAmount(margin),
     result: centsToAmount(margin - toCents(input.expenseTotal)),
   };
+}
+
+export function ownerRead(input: {
+  books: BooksPayload;
+  previous: BooksPayload | null;
+  today: string;
+  grain: Grain;
+}): { result: string; compare: string | null; notes: string[] } {
+  const { books, previous, today, grain } = input;
+  const centre = centreBreakdown(books, books.rates);
+  const notes: string[] = [];
+  let compare: string | null = null;
+  if (previous && (toCents(previous.salesTotal) > 0 || toCents(previous.expenseTotal) > 0 || toCents(previous.purchaseTotal) > 0)) {
+    const diff = toCents(centre.result) - toCents(centreBreakdown(previous, previous.rates).result);
+    const when = grain === "day" ? "yesterday" : grain === "month" ? "last month" : "last year";
+    compare = diff === 0 ? `Same as ${when}` : `${diff > 0 ? "Up" : "Down"} ${formatInr(centsToAmount(Math.abs(diff)))} on ${when}`;
+  }
+
+  if (toCents(centre.result) < 0) {
+    notes.push(`Expenses are higher than our share. Short by ${formatInr(centsToAmount(Math.abs(toCents(centre.result))))}.`);
+  }
+
+  const earners = [...centre.rows].sort((a, b) => toCents(b.ours) - toCents(a.ours));
+  const sellers = books.categories.filter((row) => toCents(row.sales) > 0).sort((a, b) => toCents(b.sales) - toCents(a.sales));
+  if (earners[0] && sellers[0] && earners[0].label !== sellers[0].label) {
+    notes.push(
+      `${earners[0].label} earned the most for us, ${formatInr(earners[0].ours)}. ${sellers[0].label} sold the most, ${formatInr(sellers[0].sales)}.`,
+    );
+  } else if (earners[0] && earners.length > 1) {
+    notes.push(`${earners[0].label} is carrying the shop, ${formatInr(earners[0].ours)} for us.`);
+  }
+
+  const unsold = books.categories.filter((row) => toCents(row.purchases) > 0 && toCents(row.sales) === 0);
+  if (unsold.length > 0) {
+    const names = unsold.map((row) => row.label).join(", ");
+    notes.push(`${names} ${unsold.length === 1 ? "was" : "were"} bought and did not sell. Check that stock.`);
+  } else {
+    const gap = toCents(books.purchaseTotal) - toCents(books.salesTotal);
+    if (gap >= 100000) notes.push(`Bought ${formatInr(centsToAmount(gap))} more than you sold. That money is in stock.`);
+    else if (toCents(books.salesTotal) - toCents(books.purchaseTotal) >= 200000 && toCents(books.purchaseTotal) > 0) {
+      notes.push(
+        `Sold ${formatInr(centsToAmount(toCents(books.salesTotal) - toCents(books.purchaseTotal)))} more than you bought. Do not let the shelves run out.`,
+      );
+    }
+  }
+
+  const costs = books.expenses.filter((row) => toCents(row.total) > 0).sort((a, b) => toCents(b.total) - toCents(a.total));
+  if (costs[0] && toCents(centre.margin) > 0 && toCents(books.expenseTotal) * 2 >= toCents(centre.margin)) {
+    notes.push(`${costs[0].label} is the biggest cost, ${formatInr(costs[0].total)}. Expenses took a large part of our share.`);
+  }
+
+  const gpay = toCents(books.payments.find((row) => row.payment === "gpay")?.sales ?? "0");
+  const cash = toCents(books.payments.find((row) => row.payment === "cash")?.sales ?? "0");
+  if (gpay > cash && gpay > 0) notes.push("More sales came by GPay than cash. The drawer will look smaller than the book.");
+
+  if (toCents(books.bankDue) > 0) notes.push(`${formatInr(books.bankDue)} of bank savings is due back in this period.`);
+
+  if (grain !== "day" && toCents(books.salesTotal) > 0) {
+    const end = today < books.from ? books.from : today > books.to ? books.to : today;
+    const days = Math.max(1, differenceInCalendarDays(parseISO(end), parseISO(books.from)) + 1);
+    if (days >= 2) notes.push(`About ${formatInr(centsToAmount(Math.round(toCents(books.salesTotal) / days)))} of sales a day.`);
+    if (grain === "month") {
+      const busy = [...books.series].sort((a, b) => toCents(b.sales) - toCents(a.sales))[0];
+      const busyDays = books.series.filter((point) => toCents(point.sales) > 0).length;
+      if (busy && busyDays >= 2 && toCents(busy.sales) > 0) {
+        notes.push(`Busiest day was ${format(parseISO(busy.bucket), "EEEE d MMM")}, ${formatInr(busy.sales)}.`);
+      }
+    }
+  }
+
+  return { result: centre.result, compare, notes: notes.slice(0, 4) };
 }
 
 export function cashAfterBank(

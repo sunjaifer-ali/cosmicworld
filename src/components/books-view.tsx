@@ -15,11 +15,10 @@ import {
   formatRate,
   isCurrentPeriod,
   leftAfter,
-  paymentLabel,
+  ownerRead,
   percentToBasis,
   periodRange,
   pointLabel,
-  resolveRates,
   sanitizePercentInput,
   shiftAnchor,
   toCents,
@@ -68,13 +67,17 @@ export function BooksView({
       toCents(books.bankGiven) === 0 &&
       toCents(books.bankReturned) === 0 &&
       toCents(books.gamingTotal) === 0);
+  const previousAnchor = shiftAnchor(anchor, grain, -1);
+  const previousRange = periodRange(previousAnchor, grain);
+  const previous = useQuery({
+    queryKey: ["books", grain, previousRange.from, previousRange.to],
+    queryFn: () => getBooks({ data: { from: previousRange.from, to: previousRange.to, grain } }),
+    enabled: Boolean(books) && !quiet,
+  });
   const productRows = books
     ? books.categories.filter((row) => toCents(row.sales) > 0 || toCents(row.purchases) > 0)
     : [];
   const expenseRows = books ? books.expenses.filter((row) => toCents(row.total) > 0) : [];
-  const maxSales = books ? Math.max(...books.categories.map((row) => toCents(row.sales)), 0) : 0;
-  const maxPurchases = books ? Math.max(...books.categories.map((row) => toCents(row.purchases)), 0) : 0;
-  const maxExpenses = books ? Math.max(...books.expenses.map((row) => toCents(row.total)), 0) : 0;
   const [reportError, setReportError] = useState("");
   const [reportBusy, setReportBusy] = useState<"excel" | "pdf" | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -200,42 +203,9 @@ export function BooksView({
         </div>
       ) : books ? (
         <div className="mt-4 space-y-4">
-          <CentreCard books={books} />
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Sales" value={formatInr(books.salesTotal)} />
-            <Stat label="Purchases" value={formatInr(books.purchaseTotal)} />
-            <Stat label="Expenses" value={formatInr(books.expenseTotal)} />
-            <Stat
-              label="Left"
-              value={formatInr(leftAfter(books.salesTotal, books.purchaseTotal, books.expenseTotal))}
-              negative={toCents(leftAfter(books.salesTotal, books.purchaseTotal, books.expenseTotal)) < 0}
-            />
-          </div>
-          <p className="text-sm text-muted">Left is the money movement, not the profit.</p>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {books.payments.map((row) => {
-              const moved = toCents(books.bankGiven) > 0 || toCents(books.bankReturned) > 0 || toCents(row.gaming) > 0;
-              const till = cashAfterBank(row.sales, row.purchases, row.expenses, row.payment === "cash" ? books.bankGiven : "0", row.payment === "cash" ? books.bankReturned : "0", row.gaming);
-              return (
-                <article key={row.payment} className="rounded-xl border border-line bg-card p-4">
-                  <h3 className="text-sm font-medium">{paymentLabel(row.payment)}</h3>
-                  <div className="mt-3 space-y-2 text-sm">
-                    {toCents(row.sales) > 0 ? <MoneyLine label="In" value={formatInr(row.sales)} /> : null}
-                    {toCents(row.gaming) > 0 ? <MoneyLine label="Gaming" value={formatInr(row.gaming)} /> : null}
-                    {toCents(row.purchases) > 0 ? <MoneyLine label="Purchases" value={formatInr(row.purchases)} /> : null}
-                    {toCents(row.expenses) > 0 ? <MoneyLine label="Expenses" value={formatInr(row.expenses)} /> : null}
-                    <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
-                      <p>{row.payment === "cash" && moved ? "In the till" : "Left"}</p>
-                      <p className={cn("font-semibold tabular-nums", toCents(till) < 0 && "text-danger")}>{formatInr(till)}</p>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-
+          {!quiet ? <OwnerBrief books={books} previous={previous.data ?? null} today={today} grain={grain} /> : null}
+          <PeriodStatement books={books} />
+          <ForUs books={books} />
           {toCents(books.bankGiven) > 0 || toCents(books.bankReturned) > 0 || toCents(books.bankHeld) !== 0 || toCents(books.bankDue) > 0 ? (
             <BankCard given={books.bankGiven} returned={books.bankReturned} interest={books.bankInterest} held={books.bankHeld} due={books.bankDue} />
           ) : null}
@@ -251,29 +221,46 @@ export function BooksView({
             </div>
           ) : (
             <>
-              {productRows.length > 0 ? (
-                <section className="rounded-xl border border-line bg-card p-4">
-                  <h3 className="font-display text-xl leading-tight">By category</h3>
-                  <div className="mt-4 space-y-4">
-                    {productRows.map((row) => (
-                      <div key={row.id} className="space-y-3">
-                        <p className="text-sm font-medium">{row.label}</p>
-                        {toCents(row.sales) > 0 ? <Meter label="Sales" value={row.sales} max={maxSales} /> : null}
-                        {toCents(row.purchases) > 0 ? <Meter label="Purchases" value={row.purchases} max={maxPurchases} soft /> : null}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {expenseRows.length > 0 ? (
-                <section className="rounded-xl border border-line bg-card p-4">
-                  <h3 className="font-display text-xl leading-tight">Expenses</h3>
-                  <div className="mt-4 space-y-4">
-                    {expenseRows.map((row) => (
-                      <Meter key={row.id} label={row.label} value={row.total} max={maxExpenses} soft />
-                    ))}
-                  </div>
+              {productRows.length > 0 || expenseRows.length > 0 ? (
+                <section className="grid gap-3 lg:grid-cols-2">
+                  {productRows.length > 0 ? (
+                    <article className="rounded-xl border border-line bg-card p-4">
+                      <h3 className="font-display text-xl leading-tight">By category</h3>
+                      <table className="mt-3 w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-line text-left text-muted">
+                            <th className="py-2 font-medium">Category</th>
+                            <th className="py-2 text-right font-medium">Sales</th>
+                            <th className="py-2 text-right font-medium">Purchases</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {productRows.map((row) => (
+                            <tr key={row.id} className="border-b border-line last:border-0">
+                              <td className="py-2">{row.label}</td>
+                              <td className="py-2 text-right tabular-nums">{toCents(row.sales) > 0 ? formatInr(row.sales) : "—"}</td>
+                              <td className="py-2 text-right tabular-nums">{toCents(row.purchases) > 0 ? formatInr(row.purchases) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </article>
+                  ) : null}
+                  {expenseRows.length > 0 ? (
+                    <article className="rounded-xl border border-line bg-card p-4">
+                      <h3 className="font-display text-xl leading-tight">Expenses</h3>
+                      <table className="mt-3 w-full text-sm">
+                        <tbody>
+                          {expenseRows.map((row) => (
+                            <tr key={row.id} className="border-b border-line last:border-0">
+                              <td className="py-2">{row.label}</td>
+                              <td className="py-2 text-right font-semibold tabular-nums">{formatInr(row.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </article>
+                  ) : null}
                 </section>
               ) : null}
 
@@ -360,36 +347,146 @@ function PeriodList({
   );
 }
 
-function CentreCard({ books }: { books: BooksPayload }) {
-  const shown = resolveRates(books.rates);
+function OwnerBrief({
+  books,
+  previous,
+  today,
+  grain,
+}: {
+  books: BooksPayload;
+  previous: BooksPayload | null;
+  today: string;
+  grain: Grain;
+}) {
+  const read = ownerRead({ books, previous, today, grain });
+  const short = toCents(read.result) < 0;
+  return (
+    <section className="rounded-xl border border-line bg-card p-4">
+      <p className="text-sm font-medium text-muted">For the owner</p>
+      <p className={cn("mt-1 font-display text-3xl leading-none tabular-nums", short && "text-danger")}>
+        For us {formatInr(read.result)}
+      </p>
+      {read.compare ? <p className="mt-2 text-sm font-medium">{read.compare}</p> : null}
+      {read.notes.length > 0 ? (
+        <ul className="mt-3 space-y-2 text-sm text-pretty">
+          {read.notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function moneyOf(books: BooksPayload, payment: "cash" | "gpay", field: "sales" | "purchases" | "expenses") {
+  return books.payments.find((row) => row.payment === payment)?.[field] ?? "0.00";
+}
+
+function PeriodStatement({ books }: { books: BooksPayload }) {
+  const left = leftAfter(books.salesTotal, books.purchaseTotal, books.expenseTotal);
+  const cashLeft = leftAfter(moneyOf(books, "cash", "sales"), moneyOf(books, "cash", "purchases"), moneyOf(books, "cash", "expenses"));
+  const till = cashAfterBank(moneyOf(books, "cash", "sales"), moneyOf(books, "cash", "purchases"), moneyOf(books, "cash", "expenses"), books.bankGiven, books.bankReturned, "0");
+  const bankMoved = toCents(books.bankGiven) > 0 || toCents(books.bankReturned) > 0;
+  const rows = [
+    ["Sales", "sales"],
+    ["Purchases", "purchases"],
+    ["Expenses", "expenses"],
+  ] as const;
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-line bg-card">
+      <h3 className="px-4 pt-4 font-display text-xl leading-tight">This period</h3>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[22rem] text-sm">
+          <thead>
+            <tr className="border-y border-line text-muted">
+              <th className="px-4 py-2 text-left font-medium"> </th>
+              <th className="px-3 py-2 text-right font-medium">Cash</th>
+              <th className="px-3 py-2 text-right font-medium">GPay</th>
+              <th className="px-4 py-2 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, field]) => (
+              <tr key={field} className="border-b border-line">
+                <td className="px-4 py-2">{label}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatInr(moneyOf(books, "cash", field))}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatInr(moneyOf(books, "gpay", field))}</td>
+                <td className="px-4 py-2 text-right font-medium tabular-nums">
+                  {formatInr(field === "sales" ? books.salesTotal : field === "purchases" ? books.purchaseTotal : books.expenseTotal)}
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td className="px-4 py-3 font-medium">Left</td>
+              <td className={cn("px-3 py-3 text-right font-semibold tabular-nums", toCents(cashLeft) < 0 && "text-danger")}>{formatInr(cashLeft)}</td>
+              <td className={cn("px-3 py-3 text-right font-semibold tabular-nums", toCents(leftAfter(moneyOf(books, "gpay", "sales"), moneyOf(books, "gpay", "purchases"), moneyOf(books, "gpay", "expenses"))) < 0 && "text-danger")}>
+                {formatInr(leftAfter(moneyOf(books, "gpay", "sales"), moneyOf(books, "gpay", "purchases"), moneyOf(books, "gpay", "expenses")))}
+              </td>
+              <td className={cn("px-4 py-3 text-right font-semibold tabular-nums", toCents(left) < 0 && "text-danger")}>{formatInr(left)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="px-4 pb-4 text-sm text-pretty text-muted">
+        Left is sales minus purchases and expenses. Purchases are stock, not a loss. This is not the profit.
+      </p>
+      <div className="border-t border-line px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-medium">Cash in the till</p>
+          <p className={cn("font-semibold tabular-nums", toCents(till) < 0 && "text-danger")}>{formatInr(till)}</p>
+        </div>
+        <p className="mt-1 text-sm text-pretty text-muted">
+          {bankMoved
+            ? `Bank pay is taken out of the drawer. Given ${formatInr(books.bankGiven)}, back ${formatInr(books.bankReturned)}. GPay is not in the till.`
+            : "Cash left after purchases and expenses. GPay is not in the till."}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function ForUs({ books }: { books: BooksPayload }) {
   const centre = centreBreakdown(books, books.rates);
   return (
     <section className="rounded-xl border border-line bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="font-display text-xl leading-tight">Centre</h3>
-      </div>
+      <h3 className="font-display text-xl leading-tight">For us</h3>
       <p className="mt-1 text-sm text-pretty text-muted">
-        Cosmetics {formatRate(shown.cosmetics)} · Fancy {formatRate(shown.fancy)} · Accessories{" "}
-        {formatRate(shown.accessories)} · Mixed {formatRate(shown.mixed)} · Gaming {formatRate(shown.gaming)}. Expenses
-        come off. Purchases stay as stock.
+        Our share of sales, then expenses come off. Purchases and bank savings are not taken off here.
       </p>
-      <RateEditor rates={books.rates} />
-      <div className="mt-4 space-y-2 text-sm">
-        {centre.rows.map((row) => (
-          <div key={row.label} className="flex items-center justify-between gap-3">
-            <p>
-              {row.label} · {row.rate}
-            </p>
-            <p className="tabular-nums">{formatInr(row.ours)}</p>
-          </div>
-        ))}
-        <MoneyLine label="Before expenses" value={formatInr(centre.margin)} />
-        <MoneyLine label="Expenses" value={formatInr(books.expenseTotal)} />
+      {centre.rows.length > 0 ? (
+        <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="border-b border-line text-left text-muted">
+              <th className="py-2 font-medium">From</th>
+              <th className="py-2 text-right font-medium">Sales</th>
+              <th className="py-2 text-right font-medium">Share</th>
+              <th className="py-2 text-right font-medium">Ours</th>
+            </tr>
+          </thead>
+          <tbody>
+            {centre.rows.map((row) => (
+              <tr key={row.label} className="border-b border-line">
+                <td className="py-2">{row.label}</td>
+                <td className="py-2 text-right tabular-nums">{formatInr(row.sales)}</td>
+                <td className="py-2 text-right tabular-nums">{row.rate}</td>
+                <td className="py-2 text-right tabular-nums">{formatInr(row.ours)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mt-3 text-sm text-muted">No sales in this period.</p>
+      )}
+      <div className="mt-3 space-y-2 text-sm">
+        <MoneyLine label="Share of sales" value={formatInr(centre.margin)} />
+        <MoneyLine label="Expenses" value={toCents(books.expenseTotal) > 0 ? `−${formatInr(books.expenseTotal)}` : formatInr(books.expenseTotal)} />
         <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
           <p className="font-medium">For us</p>
-          <p className={cn("font-semibold tabular-nums", toCents(centre.result) < 0 && "text-danger")}>{formatInr(centre.result)}</p>
+          <p className={cn("text-lg font-semibold tabular-nums", toCents(centre.result) < 0 && "text-danger")}>{formatInr(centre.result)}</p>
         </div>
       </div>
+      <RateEditor rates={books.rates} />
     </section>
   );
 }
@@ -522,10 +619,8 @@ function BankCard({
 }) {
   return (
     <section className="rounded-xl border border-line bg-card p-4">
-      <h3 className="font-display text-xl leading-tight">Bank pay</h3>
-      <p className="mt-1 text-sm text-pretty text-muted">
-        Cash given to the collection agent stays as savings. About six months later the bank returns it with a small interest. It is not counted in For us.
-      </p>
+      <h3 className="font-display text-xl leading-tight">Bank savings</h3>
+      <p className="mt-1 text-sm text-pretty text-muted">Cash with the collection agent. It comes back in about six months, with interest. Not part of For us.</p>
       <div className="mt-4 space-y-2 text-sm">
         <MoneyLine label="Given this period" value={formatInr(given)} />
         <MoneyLine label="Received back" value={formatInr(returned)} />
@@ -540,35 +635,11 @@ function BankCard({
   );
 }
 
-function Stat({ label, value, negative = false }: { label: string; value: string; negative?: boolean }) {
-  return (
-    <article className="rounded-xl border border-line bg-card p-4">
-      <p className="text-sm text-muted">{label}</p>
-      <p className={cn("mt-1 font-display text-2xl tabular-nums", negative && "text-danger")}>{value}</p>
-    </article>
-  );
-}
-
 function MoneyLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <p>{label}</p>
       <p className="tabular-nums">{value}</p>
-    </div>
-  );
-}
-
-function Meter({ label, value, max, soft = false }: { label: string; value: string; max: number; soft?: boolean }) {
-  const width = max > 0 ? Math.max(4, Math.round((toCents(value) / max) * 100)) : 0;
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <p>{label}</p>
-        <p className="tabular-nums">{formatInr(value)}</p>
-      </div>
-      <div className="mt-2 h-2 rounded-full bg-wash">
-        <div className={cn("h-2 rounded-full", soft ? "bg-faint" : "bg-ink")} style={{ width: `${Math.min(width, 100)}%` }} />
-      </div>
     </div>
   );
 }
