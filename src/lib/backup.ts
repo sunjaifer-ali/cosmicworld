@@ -20,6 +20,7 @@ const purchaseRow = z.object({
   category: z.enum(["cosmetics", "fancy", "accessories", "general"]),
   amount: money,
   payment: z.enum(["cash", "gpay"]),
+  supplier: z.string().trim().max(40).nullable().optional(),
   createdAt: stamp,
 });
 
@@ -54,6 +55,23 @@ const gamingRow = z.object({
   createdAt: stamp,
 });
 
+const drawerRow = z.object({ date: day, amount: money });
+const gpayRow = z.object({
+  id,
+  date: day,
+  amount: money,
+  createdAt: stamp,
+});
+
+const moveRow = z.object({
+  id,
+  date: day,
+  direction: z.enum(["taken", "put"]),
+  amount: money,
+  note: z.string().trim().max(40).nullable().optional(),
+  createdAt: stamp,
+});
+
 const basis = z.number().int().min(0).max(10000);
 
 function uniqueIds(value: { id: number }[], ctx: z.RefinementCtx, label: string) {
@@ -77,6 +95,9 @@ export const backupFileSchema = z
     expenses: z.array(expenseRow).max(20000),
     bank: z.array(bankRow).max(20000),
     gaming: z.array(gamingRow).max(20000),
+    drawer: z.array(drawerRow).max(5000).optional(),
+    gpay: z.array(gpayRow).max(20000).optional(),
+    moves: z.array(moveRow).max(20000).optional(),
     rates: z.object({
       cosmetics: basis,
       fancy: basis,
@@ -92,6 +113,8 @@ export const backupFileSchema = z
     uniqueIds(file.expenses, ctx, "expense");
     uniqueIds(file.bank, ctx, "bank");
     uniqueIds(file.gaming, ctx, "gaming");
+    if (file.gpay) uniqueIds(file.gpay, ctx, "gpay");
+    if (file.moves) uniqueIds(file.moves, ctx, "drawer");
   });
 
 export type BackupFile = z.infer<typeof backupFileSchema>;

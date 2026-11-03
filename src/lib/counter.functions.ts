@@ -77,6 +77,24 @@ export const createStaff = createServerFn({ method: "POST" })
     return createStaffAccount(admin, data.username, data.password);
   });
 
+export const changePassword = createServerFn({ method: "POST" })
+  .middleware([counterMiddleware])
+  .validator(z.object({ current: passwordSchema, next: passwordSchema }))
+  .handler(async ({ data, context }) => {
+    const { changeOwnPassword } = await import("@/lib/counter-auth.server");
+    const account = requireCounter(accountFromContext(context));
+    return changeOwnPassword(account, data.current, data.next);
+  });
+
+export const setStaffPassword = createServerFn({ method: "POST" })
+  .middleware([counterMiddleware])
+  .validator(z.object({ username: usernameSchema, password: passwordSchema }))
+  .handler(async ({ data, context }) => {
+    const { setStaffPassword: save } = await import("@/lib/counter-auth.server");
+    const admin = requireCounter(accountFromContext(context), true);
+    return save(admin, data.username, data.password);
+  });
+
 export const removeStaff = createServerFn({ method: "POST" })
   .middleware([counterMiddleware])
   .validator(z.object({ username: usernameSchema }))

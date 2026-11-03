@@ -9,13 +9,20 @@ import {
   booksInput,
   buildSeries,
   canonicalAmount,
+  canonicalCount,
   canonicalInterest,
+  centsToAmount,
   CATEGORY_ROWS,
   dateSchema,
   DEFAULT_RATES,
   EXPENSE_CATEGORIES,
+  drawerInput,
+  drawerMoveInput,
+  editPurchaseInput,
+  editSaleInput,
   expenseInput,
   gamingInput,
+  gpayInInput,
   PAYMENTS,
   percentToBasis,
   purchaseInput,
@@ -200,7 +207,7 @@ async function readLines(date: string): Promise<LedgerLine[]> {
              category,
              amount::text,
              payment,
-             null::text,
+             supplier as remark,
              to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
       from purchases
       where purchase_date = ${date}::date
@@ -279,9 +286,67 @@ export const listDay = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     requireCounter(accountFromContext(context));
     assertRealDate(data.date);
+    const sql = await getSql();
     const lines = await readLines(data.date);
     const bank = await readBank(data.date);
-    return { lines, bank };
+    const counted = await sql<{ amount: unknown }>`
+      select amount::text as amount from drawer_counts where count_date = ${data.date}::date
+    `;
+    const previous = await sql<{ count_date: string; amount: unknown }>`
+      select to_char(count_date, 'YYYY-MM-DD') as count_date, amount::text as amount
+      from drawer_counts
+      where count_date < ${data.date}::date
+      order by count_date desc
+      limit 1
+    `;
+    let expected: string | null = null;
+    if (previous[0]) {
+      const since = previous[0].count_date;
+      const moved = await sql<{ total: unknown }>`
+        select (
+          coalesce((select sum(amount) from sales where payment = 'cash' and sale_date > ${since}::date and sale_date <= ${data.date}::date), 0)
+          - coalesce((select sum(amount) from purchases where payment = 'cash' and purchase_date > ${since}::date and purchase_date <= ${data.date}::date), 0)
+          - coalesce((select sum(amount) from expenses where payment = 'cash' and expense_date > ${since}::date and expense_date <= ${data.date}::date), 0)
+          - coalesce((select sum(amount) from bank_savings where direction = 'given' and entry_date > ${since}::date and entry_date <= ${data.date}::date), 0)
+          + coalesce((select sum(amount) from bank_savings where direction = 'returned' and entry_date > ${since}::date and entry_date <= ${data.date}::date), 0)
+          - coalesce((select sum(amount) from drawer_moves where direction = 'taken' and entry_date > ${since}::date and entry_date <= ${data.date}::date), 0)
+          + coalesce((select sum(amount) from drawer_moves where direction = 'put' and entry_date > ${since}::date and entry_date <= ${data.date}::date), 0)
+        )::text as total
+      `;
+      expected = centsToAmount(toCents(asText(previous[0].amount)) + toCents(asText(moved[0]?.total)));
+    }
+    const gpay = await sql<{ id: unknown; amount: unknown; entered_at: string }>`
+      select id,
+             amount::text as amount,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as entered_at
+      from gpay_received
+      where entry_date = ${data.date}::date
+      order by created_at desc, id desc
+    `;
+    const moves = await sql<{ id: unknown; direction: string; amount: unknown; note: string | null; entered_at: string }>`
+      select id,
+             direction,
+             amount::text as amount,
+             note,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as entered_at
+      from drawer_moves
+      where entry_date = ${data.date}::date
+      order by created_at desc, id desc
+    `;
+    return {
+      lines,
+      bank,
+      counted: counted[0] ? asText(counted[0].amount) : null,
+      expected,
+      gpay: gpay.map((row) => ({ id: asId(row.id), amount: asText(row.amount), enteredAt: row.entered_at })),
+      moves: moves.map((row) => ({
+        id: asId(row.id),
+        direction: row.direction === "put" ? "put" : "taken",
+        amount: asText(row.amount),
+        note: asRemark(row.note),
+        enteredAt: row.entered_at,
+      })),
+    };
   });
 
 export const addSale = createServerFn({ method: "POST" })
@@ -309,13 +374,125 @@ export const addPurchase = createServerFn({ method: "POST" })
     assertRealDate(data.date);
     const amount = canonicalAmount(data.amount);
     if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const supplier = data.supplier?.trim() || null;
     const sql = await getSql();
     const rows = await sql<{ id: unknown }>`
-      insert into purchases (purchase_date, category, amount, payment)
-      values (${data.date}::date, ${data.category}, ${amount}::numeric, ${data.payment})
+      insert into purchases (purchase_date, category, amount, payment, supplier)
+      values (${data.date}::date, ${data.category}, ${amount}::numeric, ${data.payment}, ${supplier})
       returning id
     `;
     return { id: asId(rows[0]?.id) };
+  });
+
+export const editSale = createServerFn({ method: "POST" })
+  .validator(editSaleInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update sales
+      set category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That sale is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const editPurchase = createServerFn({ method: "POST" })
+  .validator(editPurchaseInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const supplier = data.supplier?.trim() || null;
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update purchases
+      set category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}, supplier = ${supplier}
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That purchase is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const saveDrawer = createServerFn({ method: "POST" })
+  .validator(drawerInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    assertRealDate(data.date);
+    const amount = canonicalCount(data.amount);
+    if (!amount) throw new Error("Enter the cash you counted, like 250 or 0");
+    const sql = await getSql();
+    await sql`
+      insert into drawer_counts (count_date, amount)
+      values (${data.date}::date, ${amount}::numeric)
+      on conflict (count_date) do update set amount = excluded.amount, created_at = now()
+    `;
+    return { amount };
+  });
+
+export const addDrawerMove = createServerFn({ method: "POST" })
+  .validator(drawerMoveInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const note = data.note?.trim() || null;
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      insert into drawer_moves (entry_date, direction, amount, note)
+      values (${data.date}::date, ${data.direction}, ${amount}::numeric, ${note})
+      returning id
+    `;
+    return { id: asId(rows[0]?.id) };
+  });
+
+export const removeDrawerMove = createServerFn({ method: "POST" })
+  .validator(removeInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`delete from drawer_moves where id = ${data.id} returning id`;
+    if (!rows[0]) throw new Error("That row is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const addGpayIn = createServerFn({ method: "POST" })
+  .validator(gpayInInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      insert into gpay_received (entry_date, amount)
+      values (${data.date}::date, ${amount}::numeric)
+      returning id
+    `;
+    return { id: asId(rows[0]?.id) };
+  });
+
+export const removeGpayIn = createServerFn({ method: "POST" })
+  .validator(removeInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`delete from gpay_received where id = ${data.id} returning id`;
+    if (!rows[0]) throw new Error("That GPay row is already gone");
+    return { id: asId(rows[0].id) };
   });
 
 export const addExpense = createServerFn({ method: "POST" })
@@ -670,6 +847,25 @@ export const getBooks = createServerFn({ method: "GET" })
       where direction = 'given'
         and (entry_date + interval '6 months')::date between ${data.from}::date and ${data.to}::date
     `;
+    const gpayIn = await sql<{ total: unknown }>`
+      select coalesce(sum(amount), 0)::text as total
+      from gpay_received
+      where entry_date between ${data.from}::date and ${data.to}::date
+    `;
+    const drawer =
+      data.from === data.to
+        ? await sql<{ amount: unknown }>`
+            select amount::text as amount from drawer_counts where count_date = ${data.from}::date
+          `
+        : [];
+    const taken = await sql<{ total: unknown }>`
+      select (
+        coalesce(sum(amount) filter (where direction = 'taken'), 0)
+        - coalesce(sum(amount) filter (where direction = 'put'), 0)
+      )::text as total
+      from drawer_moves
+      where entry_date between ${data.from}::date and ${data.to}::date
+    `;
     const gamingRows = await sql<{ payment: string; total: unknown; n: unknown }>`
       select payment,
              coalesce(sum(amount), 0)::text as total,
@@ -753,6 +949,9 @@ export const getBooks = createServerFn({ method: "GET" })
       bankInterest: asText(periodBank[0]?.interest),
       bankHeld: asText(heldBank[0]?.held),
       bankDue: asText(dueBank[0]?.due),
+      gpayReceived: asText(gpayIn[0]?.total),
+      drawerCount: drawer[0] ? asText(drawer[0].amount) : null,
+      cashTaken: asText(taken[0]?.total),
       gamingTotal: addAmounts(payments.map((row) => row.gaming)),
       gamingCount: payments.reduce((sum, row) => sum + row.gamingCount, 0),
       rates: await loadRates(),

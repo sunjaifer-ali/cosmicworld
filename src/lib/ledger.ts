@@ -133,6 +133,40 @@ export const purchaseInput = z.object({
   category: purchaseCategorySchema,
   amount: amountSchema,
   payment: paymentSchema,
+  supplier: z.string().trim().max(40).optional(),
+});
+
+export const editSaleInput = z.object({
+  id: z.number().int().positive(),
+  category: saleCategorySchema,
+  amount: amountSchema,
+  payment: paymentSchema,
+});
+
+export const editPurchaseInput = editSaleInput.extend({
+  category: purchaseCategorySchema,
+  supplier: z.string().trim().max(40).optional(),
+});
+
+export const drawerInput = z.object({
+  date: dateSchema,
+  amount: z
+    .string()
+    .trim()
+    .regex(/^\d{1,7}(\.\d{1,2})?$/, "Enter the amount, like 250 or 0")
+    .refine((value) => toCents(value) >= 0, "Amount cannot be negative"),
+});
+
+export const gpayInInput = z.object({
+  date: dateSchema,
+  amount: amountSchema,
+});
+
+export const drawerMoveInput = z.object({
+  date: dateSchema,
+  direction: z.enum(["taken", "put"]),
+  amount: amountSchema,
+  note: z.string().trim().max(40).optional(),
 });
 
 export const gamingInput = z.object({
@@ -259,6 +293,9 @@ export type BooksPayload = {
   bankInterest: string;
   bankHeld: string;
   bankDue: string;
+  gpayReceived: string;
+  drawerCount: string | null;
+  cashTaken: string;
   gamingTotal: string;
   gamingCount: number;
   rates: MarginRates;
@@ -314,6 +351,16 @@ export function centsToAmount(cents: number): string {
   const whole = Math.floor(abs / 100);
   const frac = String(abs % 100).padStart(2, "0");
   return `${sign}${whole}.${frac}`;
+}
+
+export function canonicalCount(raw: string): string | null {
+  const cleaned = sanitizeAmountInput(raw).replace(/\.$/, "");
+  if (!/^\d{1,7}(\.\d{1,2})?$/.test(cleaned)) return null;
+  return centsToAmount(toCents(cleaned));
+}
+
+export function sanitizeSupplier(raw: string): string {
+  return raw.replace(/[^\p{L}\p{N} .,&/-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 40);
 }
 
 export function canonicalAmount(raw: string): string | null {
@@ -476,6 +523,7 @@ export function cashAfterBank(
   given: string,
   returned: string,
   gaming = "0",
+  taken = "0",
 ): string {
   return centsToAmount(
     toCents(sales) -
@@ -483,7 +531,8 @@ export function cashAfterBank(
       toCents(expenses) -
       toCents(given) +
       toCents(returned) +
-      toCents(gaming),
+      toCents(gaming) -
+      toCents(taken),
   );
 }
 

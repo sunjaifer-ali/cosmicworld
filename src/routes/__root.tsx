@@ -18,7 +18,7 @@ export const Route = createRootRoute({
         content:
           "Counter book for Cosmic World, fancy and cosmetics. Enter each sale by category and cash or GPay, plus whole purchase bills, for the day, month and year.",
       },
-      { name: "theme-color", content: "#f4f0ee" },
+      { name: "theme-color", content: "#4a2740" },
     ],
     links: [
       { rel: "icon", type: "image/jpeg", href: "/shop-mark.jpg" },

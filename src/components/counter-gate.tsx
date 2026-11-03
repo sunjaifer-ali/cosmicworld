@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { backupFileSchema, type BackupFile } from "@/lib/backup";
-import { exportBackup, restoreBackup } from "@/lib/backup.functions";
+import { exportBackup, listAutoBackups, restoreAutoBackup, restoreBackup } from "@/lib/backup.functions";
 import { cn } from "@/lib/cn";
 import {
   normalizeUsername,
@@ -12,7 +12,7 @@ import {
   type CounterPublic,
   type CounterRole,
 } from "@/lib/counter";
-import { createAdmin, createStaff, listDoorNames, listStaff, removeStaff, signInCounter } from "@/lib/counter.functions";
+import { changePassword, createAdmin, createStaff, listDoorNames, listStaff, removeStaff, setStaffPassword, signInCounter } from "@/lib/counter.functions";
 import { errorText } from "@/lib/ledger";
 
 type SignedIn = { token: string; account: CounterPublic };
@@ -367,8 +367,104 @@ export function StaffDesk() {
           </ul>
         )}
       </div>
+      <PasswordCard staff={staff.map((person) => person.username)} />
       <BackupCard />
     </section>
+  );
+}
+
+function PasswordCard({ staff }: { staff: string[] }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [staffName, setStaffName] = useState("");
+  const chosen = staff.includes(staffName) ? staffName : (staff[0] ?? "");
+  const [staffNext, setStaffNext] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const own = useMutation({
+    mutationFn: () => changePassword({ data: { current, next } }),
+    onSuccess: (result) => {
+      writeCounterToken(result.token);
+      setCurrent("");
+      setNext("");
+      setError("");
+      setNotice("Admin password changed. Other devices are signed out.");
+    },
+    onError: (cause) => {
+      setNotice("");
+      setError(errorText(cause, "Could not change the password."));
+    },
+  });
+  const staffSave = useMutation({
+    mutationFn: () => setStaffPassword({ data: { username: chosen, password: staffNext } }),
+    onSuccess: (result) => {
+      setStaffNext("");
+      setError("");
+      setNotice(`Password changed for ${result.username}. They must sign in again.`);
+    },
+    onError: (cause) => {
+      setNotice("");
+      setError(errorText(cause, "Could not change that password."));
+    },
+  });
+
+  return (
+    <div className="mt-4 space-y-4">
+      <form
+        className="rounded-xl border border-line bg-card p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          own.mutate();
+        }}
+      >
+        <h3 className="font-display text-xl">Admin password</h3>
+        <PasswordField label="Current password" value={current} onChange={setCurrent} autoComplete="current-password" />
+        <PasswordField label="New password" value={next} onChange={setNext} autoComplete="new-password" />
+        <button type="submit" disabled={own.isPending} className="mt-4 h-12 w-full rounded-xl bg-ink font-semibold text-paper disabled:opacity-50">
+          {own.isPending ? "Saving…" : "Change admin password"}
+        </button>
+      </form>
+      {staff.length > 0 ? (
+        <form
+          className="rounded-xl border border-line bg-card p-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            staffSave.mutate();
+          }}
+        >
+          <h3 className="font-display text-xl">Staff password</h3>
+          <label className="mt-3 block">
+            <span className="mb-2 block text-sm font-medium">Staff</span>
+            <select
+              value={chosen}
+              onChange={(event) => setStaffName(event.target.value)}
+              className="h-12 w-full rounded-xl border border-line bg-paper px-3"
+            >
+              {staff.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <PasswordField label="New password" value={staffNext} onChange={setStaffNext} autoComplete="new-password" />
+          <button type="submit" disabled={staffSave.isPending} className="mt-4 h-12 w-full rounded-xl bg-ink font-semibold text-paper disabled:opacity-50">
+            {staffSave.isPending ? "Saving…" : "Change staff password"}
+          </button>
+        </form>
+      ) : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {notice ? <p className="text-sm">{notice}</p> : null}
+    </div>
+  );
+}
+
+function dayTitle(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: "UTC" }).format(
+    new Date(Date.UTC(year, month - 1, day)),
   );
 }
 
@@ -378,6 +474,28 @@ function BackupCard() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState<BackupFile | null>(null);
+  const [autoDay, setAutoDay] = useState<string | null>(null);
+  const copies = useQuery({
+    queryKey: ["auto-backups"],
+    queryFn: () => listAutoBackups(),
+  });
+
+  const restoreAuto = useMutation({
+    mutationFn: (date: string) => restoreAutoBackup({ data: { date } }),
+    onSuccess: async (result) => {
+      setAutoDay(null);
+      setError("");
+      setNotice(`Books restored. ${result.sales} sales, ${result.purchases} purchases, ${result.expenses} expenses, ${result.bank} bank rows.`);
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      await queryClient.invalidateQueries({ queryKey: ["rates"] });
+      await queryClient.invalidateQueries({ queryKey: ["auto-backups"] });
+    },
+    onError: (cause) => {
+      setNotice("");
+      setError(errorText(cause, "Could not restore that day."));
+    },
+  });
 
   const download = useMutation({
     mutationFn: () => exportBackup(),
@@ -409,6 +527,7 @@ function BackupCard() {
       await queryClient.invalidateQueries({ queryKey: ["day"] });
       await queryClient.invalidateQueries({ queryKey: ["books"] });
       await queryClient.invalidateQueries({ queryKey: ["rates"] });
+      await queryClient.invalidateQueries({ queryKey: ["auto-backups"] });
     },
     onError: (cause) => {
       setNotice("");
@@ -420,9 +539,48 @@ function BackupCard() {
     <div className="mt-8 rounded-xl border border-line bg-card p-4">
       <h3 className="font-display text-xl leading-tight">Backup</h3>
       <p className="mt-1 text-sm text-pretty text-muted">
-        Download a copy of the books. Passwords are not in the file. Keep it private, in case this phone or the
-        database is lost.
+        A copy is saved in the database every day and kept for three days. Passwords are not included.
       </p>
+      <div className="mt-3 space-y-2">
+        {copies.isPending ? <p className="text-sm text-muted">Checking the saved days…</p> : null}
+        {copies.isError ? (
+          <p className="text-sm text-danger">{errorText(copies.error, "Could not load the saved days.")}</p>
+        ) : null}
+        {(copies.data?.days ?? []).map((copy) => (
+          <div key={copy.date} className="flex items-center justify-between gap-3 rounded-lg bg-wash px-3 py-2">
+            {autoDay === copy.date ? (
+              <div className="flex w-full gap-2">
+                <button type="button" onClick={() => setAutoDay(null)} className="h-11 flex-1 rounded-xl bg-card text-sm font-medium">
+                  Keep current books
+                </button>
+                <button
+                  type="button"
+                  disabled={restore.isPending}
+                  onClick={() => {
+                    setPending(null);
+                    restoreAuto.mutate(copy.date);
+                  }}
+                  className="h-11 flex-1 rounded-xl bg-ink text-sm font-medium text-paper disabled:opacity-50"
+                >
+                  {restoreAuto.isPending ? "Restoring…" : "Restore this day"}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <p className="font-medium">{dayTitle(copy.date)}</p>
+                  <p className="text-sm text-muted">
+                    {copy.sales} sales · {copy.purchases} purchases · saved {copy.savedAt}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setAutoDay(copy.date)} className="h-11 shrink-0 rounded-xl bg-card px-3 text-sm font-medium">
+                  Restore
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
@@ -531,16 +689,18 @@ export function GateStatus({
 function GateFrame({ title, lede, children }: { title: string; lede: string; children?: ReactNode }) {
   return (
     <div className="min-h-dvh bg-paper text-ink">
-      <main className="mx-auto w-full max-w-md px-4 pt-5 pb-16">
-        <div className="flex flex-col items-center text-center">
-          <BrandMark />
-          <p className="mt-2 font-display text-2xl leading-none tracking-tight">Cosmic World</p>
-          <p className="mt-1 text-sm font-semibold tracking-[0.18em] text-muted">FANCY & COSMETICS</p>
+      <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-8">
+        <div className="overflow-hidden rounded-xl border border-line border-t-4 border-t-sign bg-card px-5 py-6 text-center">
+          <div className="flex flex-col items-center">
+            <BrandMark className="size-16 ring-2 ring-sign" />
+            <p className="mt-3 font-display text-2xl leading-none tracking-tight">Cosmic World</p>
+            <p className="mt-1 text-xs font-semibold tracking-[0.18em] text-muted">FANCY & COSMETICS</p>
+          </div>
+          <h1 className="mt-5 font-display text-2xl leading-tight tracking-tight text-balance">{title}</h1>
+          <p className="mt-1 text-sm text-pretty text-muted">{lede}</p>
+          <div className="mt-4 text-left">{children}</div>
         </div>
-        <h1 className="mt-5 text-center font-display text-2xl leading-tight tracking-tight text-balance">{title}</h1>
-        <p className="mt-1 text-center text-sm text-pretty text-muted">{lede}</p>
-        {children}
-        <p className="mt-10 text-center text-sm text-pretty text-muted">
+        <p className="mt-6 text-center text-sm text-pretty text-muted">
           Developed by Jaifer Ali M. For personal use only.
         </p>
       </main>

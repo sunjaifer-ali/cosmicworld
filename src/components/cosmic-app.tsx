@@ -1,8 +1,9 @@
 import { BadgeIndianRupee, BookOpen, FileText, Landmark, Package, Receipt, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BankForm } from "@/components/bank-form";
+import { BankForm, GpayInForm } from "@/components/bank-form";
 import { BillForm } from "@/components/bill-form";
+import { syncAutoBackup } from "@/lib/backup.functions";
 import { BooksView } from "@/components/books-view";
 import { AdminSetup, BrandMark, GateStatus, SignInDoors, StaffDesk } from "@/components/counter-gate";
 import { DayLedger } from "@/components/day-ledger";
@@ -41,6 +42,7 @@ type Draft = {
   purchaseCategory: PurchaseCategory;
   purchasePayment: Payment;
   purchaseAmount: string;
+  purchaseSupplier: string;
   expenseCategory: ExpenseCategory;
   expensePayment: Payment;
   expenseAmount: string;
@@ -57,6 +59,7 @@ const INITIAL_DRAFT: Draft = {
   purchaseCategory: "general",
   purchasePayment: "cash",
   purchaseAmount: "",
+  purchaseSupplier: "",
   expenseCategory: "rent",
   expensePayment: "cash",
   expenseAmount: "",
@@ -126,6 +129,21 @@ function Desk({ account }: { account: CounterPublic }) {
     setBookAnchor(iso);
   }, []);
 
+  useEffect(() => {
+    const save = () => {
+      void syncAutoBackup().catch(() => {});
+    };
+    save();
+    const timer = window.setInterval(save, 60_000);
+    const unsub = queryClient.getMutationCache().subscribe((event) => {
+      if (event.type === "updated" && event.mutation.state.status === "success") save();
+    });
+    return () => {
+      window.clearInterval(timer);
+      unsub();
+    };
+  }, [queryClient]);
+
   const signOut = useMutation({
     mutationFn: () => signOutCounter(),
     onSuccess: () => {
@@ -147,10 +165,10 @@ function Desk({ account }: { account: CounterPublic }) {
 
   return (
     <div className="min-h-dvh bg-paper text-ink">
-      <header className="bg-ink text-paper">
+      <header className="shop-bar text-paper">
         <div className="mx-auto flex w-full max-w-5xl items-center gap-2 px-3 py-1.5 sm:px-4">
           <button type="button" onClick={goHome} className="flex min-w-0 items-center gap-2 text-left" aria-label="Home">
-            <BrandMark className="size-9" />
+            <BrandMark className="size-9 ring-2 ring-sign" />
             <span className="min-w-0">
               <span className="block truncate font-display text-lg leading-none tracking-tight text-paper">Cosmic World</span>
               <span className="mt-0.5 block truncate text-[10px] font-semibold tracking-[0.14em] text-sign">FANCY & COSMETICS</span>
@@ -168,7 +186,7 @@ function Desk({ account }: { account: CounterPublic }) {
                 setSignOutError("");
                 signOut.mutate();
               }}
-              className="h-8 rounded-sm bg-paper px-2.5 text-xs font-medium text-ink disabled:opacity-50"
+              className="h-8 rounded-full bg-sign px-3 text-xs font-semibold text-ink disabled:opacity-50"
             >
               {signOut.isPending ? "…" : "Sign out"}
             </button>
@@ -212,16 +230,19 @@ function Desk({ account }: { account: CounterPublic }) {
         ) : (
           <div className="app-grid mt-3">
             {tab === "bank" ? (
-              <BankForm
-                date={workDate}
-                direction={draft.bankDirection}
-                amount={draft.bankAmount}
-                interest={draft.bankInterest}
-                onDate={setWorkDate}
-                onDirection={(bankDirection) => setDraft((current) => ({ ...current, bankDirection }))}
-                onAmount={(bankAmount) => setDraft((current) => ({ ...current, bankAmount }))}
-                onInterest={(bankInterest) => setDraft((current) => ({ ...current, bankInterest }))}
-              />
+              <div>
+                <BankForm
+                  date={workDate}
+                  direction={draft.bankDirection}
+                  amount={draft.bankAmount}
+                  interest={draft.bankInterest}
+                  onDate={setWorkDate}
+                  onDirection={(bankDirection) => setDraft((current) => ({ ...current, bankDirection }))}
+                  onAmount={(bankAmount) => setDraft((current) => ({ ...current, bankAmount }))}
+                  onInterest={(bankInterest) => setDraft((current) => ({ ...current, bankInterest }))}
+                />
+                <GpayInForm date={workDate} />
+              </div>
             ) : tab === "expense" ? (
               <EntryForm
                 mode="expense"
@@ -239,18 +260,22 @@ function Desk({ account }: { account: CounterPublic }) {
             ) : tab === "purchase" ? (
               <EntryForm
                 mode="purchase"
+                easy={!admin}
                 date={workDate}
                 category={draft.purchaseCategory}
                 payment={draft.purchasePayment}
                 amount={draft.purchaseAmount}
+                supplier={draft.purchaseSupplier}
                 onDate={setWorkDate}
                 onCategory={(purchaseCategory) => setDraft((current) => ({ ...current, purchaseCategory }))}
                 onPayment={(purchasePayment) => setDraft((current) => ({ ...current, purchasePayment }))}
                 onAmount={(purchaseAmount) => setDraft((current) => ({ ...current, purchaseAmount }))}
+                onSupplier={(purchaseSupplier) => setDraft((current) => ({ ...current, purchaseSupplier }))}
               />
             ) : (
               <EntryForm
                 mode="sale"
+                easy={!admin}
                 date={workDate}
                 category={draft.saleCategory}
                 payment={draft.salePayment}
@@ -266,6 +291,7 @@ function Desk({ account }: { account: CounterPublic }) {
               mode={tab === "bank" ? "bank" : tab === "expense" ? "expense" : tab === "purchase" ? "purchase" : "sale"}
               today={today}
               canRemove={admin}
+              canEdit={tab === "sale" || tab === "purchase"}
               showProfit={admin}
               compact={!admin}
             />
@@ -321,8 +347,8 @@ function TabSwitch({
               aria-pressed={active}
               onClick={() => onTab(item.id)}
               className={cn(
-                "flex h-14 flex-1 flex-col items-center justify-center gap-1 rounded-sm text-xs font-medium",
-                active ? "text-ink" : "text-faint",
+                "flex h-14 flex-1 flex-col items-center justify-center gap-0.5 rounded-md text-[11px] font-medium",
+                active ? "bg-wash text-ink shadow-[inset_0_-2px_0_var(--color-sign)]" : "text-faint",
               )}
             >
               <Icon className="size-5" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
@@ -338,7 +364,7 @@ function TabSwitch({
             onClick={() => onTab(item.id)}
             className={cn(
               "h-11 rounded-sm text-sm font-medium transition-colors duration-150",
-              active ? "bg-ink text-paper" : "text-muted",
+              active ? "bg-sign text-ink" : "text-muted",
             )}
           >
             {item.label}

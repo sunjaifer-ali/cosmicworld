@@ -4,15 +4,15 @@
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces", ui-serif, Georgia, serif;
 
-  --color-paper: #f4f0ee;
-  --color-card: #fffcfa;
-  --color-ink: #3c3336;
-  --color-muted: #6f6568;
-  --color-faint: #9a8f92;
-  --color-line: #d4ccc8;
-  --color-wash: #efe8e6;
-  --color-danger: #8f3d45;
-  --color-sign: #e6d3b0;
+  --color-paper: #fbf7f8;
+  --color-card: #ffffff;
+  --color-ink: #4a2740;
+  --color-muted: #6d5866;
+  --color-faint: #a08b99;
+  --color-line: #eadfe4;
+  --color-wash: #f6eaef;
+  --color-danger: #9d3048;
+  --color-sign: #e4c48a;
 
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -30,7 +30,9 @@
   body {
     margin: 0;
     min-height: 100%;
-    background: var(--color-paper);
+    background:
+      radial-gradient(900px 280px at 50% -40px, #f6e4eb 0%, transparent 70%),
+      var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
     line-height: 1.5;
@@ -94,6 +96,14 @@
   }
 }
 
+.shop-bar {
+  background: linear-gradient(180deg, #5c314c 0%, #4a2740 100%);
+}
+
+.rounded-xl.bg-card {
+  box-shadow: 0 1px 0 rgba(74, 39, 64, 0.04), 0 12px 32px rgba(74, 39, 64, 0.05);
+}
+
 .app-pad {
   padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
 }
@@ -110,7 +120,9 @@
   bottom: 0;
   z-index: 20;
   border-top: 1px solid var(--color-line);
-  background: var(--color-card);
+  background: color-mix(in srgb, var(--color-card) 92%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -8px 24px rgba(74, 39, 64, 0.06);
   padding: 0.25rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
 }
 

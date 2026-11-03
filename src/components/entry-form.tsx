@@ -13,6 +13,7 @@ import {
   SALE_CATEGORIES,
   sanitizeAmountInput,
   sanitizeRemark,
+  sanitizeSupplier,
   type ExpenseCategory,
   type Payment,
   type PurchaseCategory,
@@ -38,9 +39,11 @@ type PurchaseDraft = {
   category: PurchaseCategory;
   payment: Payment;
   amount: string;
+  supplier: string;
   onCategory: (category: PurchaseCategory) => void;
   onPayment: (payment: Payment) => void;
   onAmount: (amount: string) => void;
+  onSupplier: (supplier: string) => void;
   onDate: (date: string) => void;
 };
 
@@ -58,11 +61,13 @@ type ExpenseDraft = {
   onDate: (date: string) => void;
 };
 
-export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
+export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { easy?: boolean }) {
   const queryClient = useQueryClient();
   const amountRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState("");
+  const [showDate, setShowDate] = useState(false);
+  const easy = props.easy === true && props.mode !== "expense";
   const categories =
     props.mode === "sale" ? SALE_CATEGORIES : props.mode === "purchase" ? PURCHASE_CATEGORIES : EXPENSE_CATEGORIES;
   const verb = props.mode === "sale" ? "sale" : props.mode === "purchase" ? "purchase" : "expense";
@@ -87,7 +92,13 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
       }
       if (props.mode === "purchase") {
         return addPurchase({
-          data: { date: props.date, category: props.category, amount, payment: props.payment },
+          data: {
+            date: props.date,
+            category: props.category,
+            amount,
+            payment: props.payment,
+            supplier: props.supplier.trim() || undefined,
+          },
         });
       }
       return addExpense({
@@ -110,6 +121,7 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
       setError("");
       props.onAmount("");
       if (props.mode === "expense") props.onRemark("");
+      if (props.mode === "purchase") props.onSupplier("");
       await queryClient.invalidateQueries({ queryKey: ["day", props.date] });
       await queryClient.invalidateQueries({ queryKey: ["books"] });
       amountRef.current?.focus();
@@ -122,19 +134,19 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
 
   return (
     <form
-      className="rounded-xl border border-line bg-card p-4"
+      className="overflow-hidden rounded-xl border border-line border-t-4 border-t-sign bg-card p-4"
       onSubmit={(event) => {
         event.preventDefault();
         setReceipt("");
         save.mutate();
       }}
     >
-      <h2 className="font-display text-xl leading-tight tracking-tight">New {verb}</h2>
+      <h2 className="font-display text-xl leading-tight tracking-tight">{easy ? (props.mode === "sale" ? "Sale" : "Purchase") : `New ${verb}`}</h2>
 
       <label className="mt-4 block" htmlFor="bill-amount">
-        <span className="mb-2 block text-sm font-medium">Amount</span>
-        <span className="flex h-14 items-center gap-2 rounded-sm border border-line bg-paper px-4 focus-within:border-ink">
-          <span className="font-display text-2xl text-muted" aria-hidden="true">
+        <span className="mb-2 block text-sm font-medium">{easy ? "How much?" : "Amount"}</span>
+        <span className={cn("flex items-center gap-2 border border-line bg-wash px-4 focus-within:border-ink", easy ? "h-20 rounded-2xl" : "h-16 rounded-xl")}>
+          <span className="font-display text-3xl text-muted" aria-hidden="true">
             ₹
           </span>
           <input
@@ -152,14 +164,16 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
               setReceipt("");
               props.onAmount(sanitizeAmountInput(event.target.value));
             }}
-            className="h-full w-full bg-transparent text-2xl font-semibold leading-none tabular-nums outline-none"
+            className={cn("h-full w-full bg-transparent font-display leading-none tabular-nums outline-none", easy ? "text-4xl" : "text-3xl")}
           />
         </span>
       </label>
 
       <fieldset className="mt-4">
-        <legend className="mb-2 text-sm font-medium">Category</legend>
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Category">
+        <legend className="mb-2 text-sm font-medium">
+          {easy ? (props.mode === "sale" ? "What sold?" : "What did you buy?") : "Category"}
+        </legend>
+        <div className={cn("flex flex-wrap gap-2", easy && "grid grid-cols-2")} role="radiogroup" aria-label="Category">
           {categories.map((item) => {
             const selected = props.category === item.id;
             return (
@@ -175,8 +189,9 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
                   else props.onCategory(item.id as ExpenseCategory);
                 }}
                 className={cn(
-                  "h-11 rounded-sm px-3 text-sm font-medium transition-colors duration-150",
-                  selected ? "bg-ink text-paper" : "bg-wash text-ink",
+                  easy ? "h-14 rounded-xl text-base" : "h-10 rounded-full px-3.5 text-sm",
+                  "font-medium transition-colors duration-150",
+                  selected ? "bg-sign text-ink shadow-sm" : "bg-wash text-ink",
                 )}
               >
                 {item.label}
@@ -185,6 +200,24 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
           })}
         </div>
       </fieldset>
+
+      {props.mode === "purchase" ? (
+        <label className="mt-4 block" htmlFor="purchase-shop">
+          <span className="mb-2 block text-sm font-medium">{easy ? "From which shop?" : "Supplier"}</span>
+          <input
+            id="purchase-shop"
+            value={props.supplier}
+            maxLength={40}
+            placeholder="Leave empty if you do not know"
+            autoComplete="off"
+            onChange={(event) => {
+              setError("");
+              props.onSupplier(sanitizeSupplier(event.target.value));
+            }}
+            className="h-12 w-full rounded-xl border border-line bg-wash px-3 text-base outline-none"
+          />
+        </label>
+      ) : null}
 
       {props.mode === "expense" && props.category === "other" ? (
         <label className="mt-5 block" htmlFor="expense-remark">
@@ -209,7 +242,7 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
 
       <div className="mt-4 grid grid-cols-[1fr_9.5rem] items-end gap-2">
         <fieldset>
-          <legend className="mb-2 text-sm font-medium">{props.mode === "sale" ? "Received as" : "Paid as"}</legend>
+          <legend className="mb-2 text-sm font-medium">{easy ? "Cash or GPay?" : props.mode === "sale" ? "Received as" : "Paid as"}</legend>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Payment">
             {PAYMENTS.map((item) => {
               const selected = props.payment === item.id;
@@ -224,8 +257,9 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
                     props.onPayment(item.id);
                   }}
                   className={cn(
-                    "h-11 rounded-sm text-sm font-medium transition-colors duration-150",
-                    selected ? "bg-ink text-paper" : "bg-wash text-ink",
+                    easy ? "h-14 rounded-xl text-base" : "h-11 rounded-full text-sm",
+                    "font-medium transition-colors duration-150",
+                    selected ? "bg-sign text-ink shadow-sm" : "bg-wash text-ink",
                   )}
                 >
                   {item.label}
@@ -237,24 +271,30 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
 
         <label className="block" htmlFor="bill-date">
           <span className="mb-2 block text-sm font-medium">Date</span>
-          <input
-            id="bill-date"
-            type="date"
-            value={props.date}
-            onChange={(event) => {
-              if (event.target.value) props.onDate(event.target.value);
-            }}
-            className="h-11 w-full rounded-sm border border-line bg-paper px-3 text-base"
-          />
+          {easy && !showDate ? (
+            <button type="button" onClick={() => setShowDate(true)} className="h-11 w-full rounded-xl bg-wash text-sm font-medium">
+              Today
+            </button>
+          ) : (
+            <input
+              id="bill-date"
+              type="date"
+              value={props.date}
+              onChange={(event) => {
+                if (event.target.value) props.onDate(event.target.value);
+              }}
+              className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+            />
+          )}
         </label>
       </div>
 
       {error ? (
-        <p className="mt-4 text-sm text-danger" role="alert">
+        <p className="mt-4 rounded-lg bg-wash px-3 py-2 text-sm text-danger" role="alert">
           {error}
         </p>
       ) : receipt ? (
-        <p className="mt-4 text-sm text-muted" role="status">
+        <p className="mt-4 rounded-lg bg-wash px-3 py-2 text-sm" role="status">
           {receipt}
         </p>
       ) : null}
@@ -262,9 +302,12 @@ export function EntryForm(props: SaleDraft | PurchaseDraft | ExpenseDraft) {
       <button
         type="submit"
         disabled={save.isPending}
-        className="mt-4 h-12 w-full rounded-sm bg-ink text-base font-semibold text-paper transition-opacity duration-150 disabled:opacity-50"
+        className={cn(
+          "mt-4 w-full bg-ink font-semibold text-paper shadow-[0_8px_20px_rgba(74,39,64,0.18)] transition-opacity duration-150 disabled:opacity-50",
+          easy ? "h-14 rounded-2xl text-lg" : "h-12 rounded-xl text-base",
+        )}
       >
-        {save.isPending ? `Saving ${verb}…` : `Save ${verb}`}
+        {save.isPending ? "Saving…" : easy ? "Save" : `Save ${verb}`}
       </button>
     </form>
   );

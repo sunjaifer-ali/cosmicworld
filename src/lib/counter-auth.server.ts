@@ -249,6 +249,52 @@ export async function listStaffUsernames(): Promise<{ username: string }[]> {
   `;
 }
 
+export async function changeOwnPassword(
+  account: CounterAccount,
+  currentRaw: string,
+  nextRaw: string,
+): Promise<{ username: string; token: string }> {
+  const current = checkedPassword(currentRaw);
+  const next = checkedPassword(nextRaw);
+  const sql = await getSql();
+  const rows = await sql<AccountRow>`
+    select id, username, password_hash, role
+    from shop_accounts
+    where id = ${account.id}
+    limit 1
+  `;
+  const row = rows[0];
+  const passwordOk = await verifyPassword(current, row?.password_hash ?? DUMMY_HASH);
+  if (!row || !passwordOk) throw new Error("Current password is wrong");
+  const passwordHash = await hashPassword(next);
+  await sql`update shop_accounts set password_hash = ${passwordHash} where id = ${account.id}`;
+  await sql`delete from shop_sessions where account_id = ${account.id}`;
+  const token = await writeSession(account.id);
+  return { username: row.username, token };
+}
+
+export async function setStaffPassword(
+  admin: CounterAccount,
+  usernameRaw: string,
+  rawPassword: string,
+): Promise<{ username: string }> {
+  if (admin.role !== "admin") throw new Error("Only the admin can do that");
+  const username = checkedUsername(usernameRaw);
+  const password = checkedPassword(rawPassword);
+  const passwordHash = await hashPassword(password);
+  const sql = await getSql();
+  const rows = await sql<{ id: string; username: string }>`
+    update shop_accounts
+    set password_hash = ${passwordHash}
+    where username = ${username} and role = 'staff'
+    returning id, username
+  `;
+  const saved = rows[0];
+  if (!saved) throw new Error("That staff login is not there");
+  await sql`delete from shop_sessions where account_id = ${saved.id}`;
+  return { username: saved.username };
+}
+
 export async function removeStaffAccount(usernameRaw: string): Promise<{ username: string }> {
   const username = checkedUsername(usernameRaw);
   const sql = await getSql();

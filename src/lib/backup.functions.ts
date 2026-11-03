@@ -19,11 +19,7 @@ function asBool(value: unknown): boolean {
   return value === true || value === "t" || value === "true";
 }
 
-export const exportBackup = createServerFn({ method: "GET" })
-  .middleware([counterMiddleware])
-  .handler(async ({ context }): Promise<BackupFile> => {
-    requireCounter(accountFromContext(context), true);
-    const sql = await getSql();
+async function readShopBackup(sql: Sql): Promise<BackupFile> {
     const sales = await sql<{
       id: unknown;
       sale_date: string;
@@ -47,6 +43,7 @@ export const exportBackup = createServerFn({ method: "GET" })
       category: string;
       amount: unknown;
       payment: string;
+      supplier: string | null;
       created_at: string;
     }>`
       select id,
@@ -54,6 +51,7 @@ export const exportBackup = createServerFn({ method: "GET" })
              category,
              amount::text as amount,
              payment,
+             supplier,
              to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
       from purchases
       order by id
@@ -111,6 +109,36 @@ export const exportBackup = createServerFn({ method: "GET" })
     `;
     const rates = await sql<{ category: string; basis: unknown }>`select category, basis from shop_rates`;
     const settings = await sql<{ mixed_average: unknown }>`select mixed_average from shop_settings where id = 1`;
+    const drawer = await sql<{ count_date: string; amount: unknown }>`
+      select to_char(count_date, 'YYYY-MM-DD') as count_date, amount::text as amount
+      from drawer_counts
+      order by count_date
+    `;
+    const gpay = await sql<{ id: unknown; entry_date: string; amount: unknown; created_at: string }>`
+      select id,
+             to_char(entry_date, 'YYYY-MM-DD') as entry_date,
+             amount::text as amount,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
+      from gpay_received
+      order by id
+    `;
+    const moves = await sql<{
+      id: unknown;
+      entry_date: string;
+      direction: string;
+      amount: unknown;
+      note: string | null;
+      created_at: string;
+    }>`
+      select id,
+             to_char(entry_date, 'YYYY-MM-DD') as entry_date,
+             direction,
+             amount::text as amount,
+             note,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
+      from drawer_moves
+      order by id
+    `;
     const found = new Map(rates.map((row) => [row.category, asCount(row.basis)]));
     const basisOf = (key: string, fallback: number) => {
       const value = found.get(key);
@@ -134,6 +162,7 @@ export const exportBackup = createServerFn({ method: "GET" })
         category: row.category as BackupFile["purchases"][number]["category"],
         amount: asText(row.amount),
         payment: row.payment === "gpay" ? "gpay" : "cash",
+        supplier: row.supplier?.trim() || null,
         createdAt: row.created_at,
       })),
       expenses: expenses.map((row) => ({
@@ -160,6 +189,21 @@ export const exportBackup = createServerFn({ method: "GET" })
         payment: row.payment === "gpay" ? "gpay" : "cash",
         createdAt: row.created_at,
       })),
+      drawer: drawer.map((row) => ({ date: row.count_date, amount: asText(row.amount) })),
+      gpay: gpay.map((row) => ({
+        id: asCount(row.id),
+        date: row.entry_date,
+        amount: asText(row.amount),
+        createdAt: row.created_at,
+      })),
+      moves: moves.map((row) => ({
+        id: asCount(row.id),
+        date: row.entry_date,
+        direction: row.direction === "put" ? ("put" as const) : ("taken" as const),
+        amount: asText(row.amount),
+        note: row.note?.trim() || null,
+        createdAt: row.created_at,
+      })),
       rates: {
         cosmetics: basisOf("cosmetics", 1500),
         fancy: basisOf("fancy", 7000),
@@ -170,6 +214,13 @@ export const exportBackup = createServerFn({ method: "GET" })
       },
     };
     return backupFileSchema.parse(file);
+}
+
+export const exportBackup = createServerFn({ method: "GET" })
+  .middleware([counterMiddleware])
+  .handler(async ({ context }): Promise<BackupFile> => {
+    requireCounter(accountFromContext(context), true);
+    return readShopBackup(await getSql());
   });
 
 async function resetSerial(sql: Sql, table: string) {
@@ -183,7 +234,10 @@ export const restoreBackup = createServerFn({ method: "POST" })
   .validator(backupFileSchema)
   .handler(async ({ data, context }) => {
     requireCounter(accountFromContext(context), true);
-    const sql = await getSql();
+    return applyBooks(await getSql(), data);
+  });
+
+async function applyBooks(sql: Sql, data: BackupFile) {
     await sql.transaction(async (tx) => {
       await tx.query("delete from sales");
       await tx.query("delete from purchases");
@@ -198,8 +252,8 @@ export const restoreBackup = createServerFn({ method: "POST" })
       }
       for (const row of data.purchases) {
         await tx.query(
-          "insert into purchases (id, purchase_date, category, amount, payment, created_at) values ($1, $2::date, $3, $4::numeric, $5, $6::timestamptz)",
-          [row.id, row.date, row.category, row.amount, row.payment, row.createdAt],
+          "insert into purchases (id, purchase_date, category, amount, payment, supplier, created_at) values ($1, $2::date, $3, $4::numeric, $5, $6, $7::timestamptz)",
+          [row.id, row.date, row.category, row.amount, row.payment, row.supplier ?? null, row.createdAt],
         );
       }
       for (const row of data.expenses) {
@@ -242,11 +296,129 @@ export const restoreBackup = createServerFn({ method: "POST" })
       await resetSerial(tx, "expenses");
       await resetSerial(tx, "bank_savings");
       await resetSerial(tx, "gaming");
+      if (data.drawer) {
+        await tx.query("delete from drawer_counts");
+        for (const row of data.drawer) {
+          await tx.query("insert into drawer_counts (count_date, amount) values ($1::date, $2::numeric)", [
+            row.date,
+            row.amount,
+          ]);
+        }
+      }
+      if (data.gpay) {
+        await tx.query("delete from gpay_received");
+        for (const row of data.gpay) {
+          await tx.query(
+            "insert into gpay_received (id, entry_date, amount, created_at) values ($1, $2::date, $3::numeric, $4::timestamptz)",
+            [row.id, row.date, row.amount, row.createdAt],
+          );
+        }
+        await resetSerial(tx, "gpay_received");
+      }
+      await tx.query("delete from drawer_moves");
+      for (const row of data.moves ?? []) {
+        await tx.query(
+          "insert into drawer_moves (id, entry_date, direction, amount, note, created_at) values ($1, $2::date, $3, $4::numeric, $5, $6::timestamptz)",
+          [row.id, row.date, row.direction, row.amount, row.note ?? null, row.createdAt],
+        );
+      }
+      await resetSerial(tx, "drawer_moves");
     });
+    await rememberDailyBackup();
     return {
       sales: data.sales.length,
       purchases: data.purchases.length,
       expenses: data.expenses.length,
       bank: data.bank.length,
     };
+}
+
+function shopDay(shift = 0): string {
+  const now = new Date(Date.now() + shift * 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+export async function rememberDailyBackup(): Promise<void> {
+  const sql = await getSql();
+  const file = await readShopBackup(sql);
+  const day = shopDay();
+  await sql`
+    insert into shop_backups (backup_date, payload)
+    values (${day}::date, ${JSON.stringify(file)}::jsonb)
+    on conflict (backup_date) do update
+      set payload = excluded.payload, created_at = now()
+  `;
+  await sql`delete from shop_backups where backup_date < ${shopDay(-2)}::date`;
+}
+
+export const syncAutoBackup = createServerFn({ method: "POST" })
+  .middleware([counterMiddleware])
+  .handler(async ({ context }) => {
+    requireCounter(accountFromContext(context));
+    await rememberDailyBackup();
+    return { ok: true };
   });
+
+export const listAutoBackups = createServerFn({ method: "GET" })
+  .middleware([counterMiddleware])
+  .handler(async ({ context }) => {
+    requireCounter(accountFromContext(context), true);
+    await rememberDailyBackup();
+    const sql = await getSql();
+    const rows = await sql<{
+      backup_date: string;
+      sales: number;
+      purchases: number;
+      expenses: number;
+      saved_at: string;
+    }>`
+      select to_char(backup_date, 'YYYY-MM-DD') as backup_date,
+             coalesce(jsonb_array_length(payload->'sales'), 0)::int as sales,
+             coalesce(jsonb_array_length(payload->'purchases'), 0)::int as purchases,
+             coalesce(jsonb_array_length(payload->'expenses'), 0)::int as expenses,
+             to_char(created_at at time zone 'Asia/Kolkata', 'HH24:MI') as saved_at
+      from shop_backups
+      where backup_date >= ${shopDay(-2)}::date
+      order by backup_date desc
+    `;
+    return {
+      days: rows.map((row) => ({
+        date: row.backup_date,
+        sales: asCount(row.sales),
+        purchases: asCount(row.purchases),
+        expenses: asCount(row.expenses),
+        savedAt: row.saved_at,
+      })),
+    };
+  });
+
+export const restoreAutoBackup = createServerFn({ method: "POST" })
+  .middleware([counterMiddleware])
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object" || !("date" in input) || typeof input.date !== "string") {
+      throw new Error("Choose a backup day");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("Choose a backup day");
+    return { date: input.date };
+  })
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    const sql = await getSql();
+    const rows = await sql<{ payload: unknown }>`
+      select payload
+      from shop_backups
+      where backup_date = ${data.date}::date
+        and backup_date >= ${shopDay(-2)}::date
+    `;
+    const raw = rows[0]?.payload;
+    if (raw == null) throw new Error("That day's copy is not there");
+    const payload = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const file = backupFileSchema.parse(payload);
+    return applyBooks(sql, file);
+  });
+

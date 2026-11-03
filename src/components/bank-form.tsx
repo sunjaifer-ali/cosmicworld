@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { addBank } from "@/lib/ledger.functions";
+import { addBank, addGpayIn } from "@/lib/ledger.functions";
 import {
   BANK_DIRECTIONS,
   bankDueDate,
@@ -219,6 +219,52 @@ export function BankForm({
         className="mt-4 h-12 w-full rounded-sm bg-ink text-base font-semibold text-paper transition-opacity duration-150 disabled:opacity-50"
       >
         {save.isPending ? "Saving…" : direction === "given" ? "Save collection" : "Save return"}
+      </button>
+    </form>
+  );
+}
+
+export function GpayInForm({ date }: { date: string }) {
+  const queryClient = useQueryClient();
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState("");
+  const [receipt, setReceipt] = useState("");
+  const save = useMutation({
+    mutationFn: () => {
+      const saved = canonicalAmount(amount);
+      if (!saved) throw new Error("Enter the amount");
+      return addGpayIn({ data: { date, amount: saved } });
+    },
+    onSuccess: async () => {
+      setReceipt(`Saved ${formatInr(canonicalAmount(amount) ?? amount)}`);
+      setAmount("");
+      setError("");
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    },
+    onError: (cause) => setError(errorText(cause, "Could not save that.")),
+  });
+  return (
+    <form
+      className="mt-4 rounded-xl border border-line bg-card p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save.mutate();
+      }}
+    >
+      <h2 className="font-display text-xl">GPay to bank</h2>
+      <p className="mt-1 text-sm text-muted">Only when the GPay money has come into the bank.</p>
+      <input
+        inputMode="decimal"
+        value={amount}
+        placeholder="Amount"
+        onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
+        className="mt-3 h-14 w-full rounded-xl border border-line bg-wash px-3 text-2xl tabular-nums outline-none"
+      />
+      {error ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
+      {receipt ? <p className="mt-2 text-sm">{receipt}</p> : null}
+      <button type="submit" disabled={save.isPending} className="mt-3 h-12 w-full rounded-xl bg-ink font-semibold text-paper disabled:opacity-50">
+        {save.isPending ? "Saving…" : "Save"}
       </button>
     </form>
   );

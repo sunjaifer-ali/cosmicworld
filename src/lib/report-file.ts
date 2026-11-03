@@ -110,7 +110,7 @@ function summaryRows(books: BooksPayload, label: string): Cell[][] {
   const cash = books.payments.find((row) => row.payment === "cash");
   const gpay = books.payments.find((row) => row.payment === "gpay");
   const till = cash
-    ? cashAfterBank(cash.sales, cash.purchases, cash.expenses, books.bankGiven, books.bankReturned, cash.gaming)
+    ? cashAfterBank(cash.sales, cash.purchases, cash.expenses, books.bankGiven, books.bankReturned, cash.gaming, books.cashTaken)
     : "0.00";
   const rows: Cell[][] = [
     [text("Cosmic World", 2), blank()],
@@ -128,6 +128,7 @@ function summaryRows(books: BooksPayload, label: string): Cell[][] {
     [text("Purchases"), money(cash?.purchases ?? "0")],
     [text("Expenses"), money(cash?.expenses ?? "0")],
     [text("In the till"), money(till)],
+    [text("Taken from the drawer"), money(books.cashTaken)],
     [blank(), blank()],
     [text("GPAY", 2), text("Amount")],
     [text("In"), money(gpay?.sales ?? "0")],
