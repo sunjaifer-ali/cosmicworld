@@ -3,11 +3,9 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
   bankDueDate,
-  cashAfterBank,
   categoryLabel,
   centreBreakdown,
   formatInr,
-  leftAfter,
   paymentLabel,
   toCents,
   type BooksPayload,
@@ -43,7 +41,7 @@ export function downloadPdf(books: BooksPayload, rows: ReportRow[], label: strin
   doc.text(label, 14, 32);
   doc.setFontSize(9);
   doc.setTextColor(111, 101, 104);
-  doc.text("Sales, purchases, expenses, and bank pay. Left is not profit.", 14, 37);
+  doc.text("Sales, purchases, expenses, and profit. Cash in is not a sale.", 14, 37);
 
   const summary = summaryRows(books, label)
     .filter((row) => row.some((cell) => cell.v !== ""))
@@ -109,9 +107,6 @@ function saveBlob(blob: Blob, name: string) {
 function summaryRows(books: BooksPayload, label: string): Cell[][] {
   const cash = books.payments.find((row) => row.payment === "cash");
   const gpay = books.payments.find((row) => row.payment === "gpay");
-  const till = cash
-    ? cashAfterBank(cash.sales, cash.purchases, cash.expenses, books.bankGiven, books.bankReturned, cash.gaming, books.cashTaken)
-    : "0.00";
   const rows: Cell[][] = [
     [text("Cosmic World", 2), blank()],
     [text("Fancy & cosmetics"), blank()],
@@ -121,23 +116,18 @@ function summaryRows(books: BooksPayload, label: string): Cell[][] {
     [text("Sales"), money(books.salesTotal)],
     [text("Purchases"), money(books.purchaseTotal)],
     [text("Expenses"), money(books.expenseTotal)],
-    [text("Left"), money(leftAfter(books.salesTotal, books.purchaseTotal, books.expenseTotal))],
     [blank(), blank()],
     [text("CASH", 2), text("Amount")],
-    [text("In"), money(cash?.sales ?? "0")],
+    [text("Sales"), money(cash?.sales ?? "0")],
     [text("Purchases"), money(cash?.purchases ?? "0")],
     [text("Expenses"), money(cash?.expenses ?? "0")],
-    [text("In the till"), money(till)],
-    [text("Taken from the drawer"), money(books.cashTaken)],
+    [text("Cash in from pocket"), money(books.cashIn)],
+    [text("Cash out"), money(books.cashOut)],
     [blank(), blank()],
     [text("GPAY", 2), text("Amount")],
-    [text("In"), money(gpay?.sales ?? "0")],
+    [text("Sales"), money(gpay?.sales ?? "0")],
     [text("Purchases"), money(gpay?.purchases ?? "0")],
     [text("Expenses"), money(gpay?.expenses ?? "0")],
-    [
-      text("Left"),
-      money(gpay ? leftAfter(gpay.sales, gpay.purchases, gpay.expenses) : "0.00"),
-    ],
     [blank(), blank()],
     [text("BY CATEGORY", 2), text("Sales"), text("Purchases")],
   ];
@@ -160,14 +150,14 @@ function summaryRows(books: BooksPayload, label: string): Cell[][] {
     [text("Still with the bank"), money(books.bankHeld)],
   );
   const centre = centreBreakdown(books, books.rates);
-  rows.push([blank(), blank()], [text("CENTRE", 2), text("For us")]);
+  rows.push([blank(), blank()], [text("PROFIT", 2), text("Amount")]);
   for (const row of centre.rows) {
     rows.push([text(`${row.label} ${row.rate}`), money(row.ours)]);
   }
   rows.push(
     [text("Before expenses"), money(centre.margin)],
     [text("Expenses"), money(books.expenseTotal)],
-    [text("For us"), money(centre.result)],
+    [text("Profit"), money(centre.result)],
   );
   return rows;
 }

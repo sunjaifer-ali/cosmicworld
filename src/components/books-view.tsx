@@ -8,7 +8,6 @@ import { getBooks, listReport, saveRates } from "@/lib/ledger.functions";
 import {
   axisLabel,
   basisToPercent,
-  cashAfterBank,
   centsToAmount,
   centreBreakdown,
   errorText,
@@ -305,139 +304,130 @@ function BookBoard({
 }) {
   const read = ownerRead({ books, previous, today, grain });
   const centre = centreBreakdown(books, books.rates);
-  const till = cashAfterBank(
-    moneyOf(books, "cash", "sales"),
-    moneyOf(books, "cash", "purchases"),
-    moneyOf(books, "cash", "expenses"),
-    books.bankGiven,
-    books.bankReturned,
-    "0",
-    books.cashTaken,
-  );
-  const rows = books.categories.filter((row) => toCents(row.sales) > 0 || toCents(row.purchases) > 0);
+  const saleOrder = ["cosmetics", "fancy", "gaming", "accessories", "mixed"];
+  const buyOrder = ["cosmetics", "fancy", "accessories", "general"];
+  const salesRows = saleOrder
+    .map((id) => books.categories.find((row) => row.id === id))
+    .filter((row): row is BooksPayload["categories"][number] => Boolean(row && toCents(row.sales) > 0));
+  const buyRows = buyOrder
+    .map((id) => books.categories.find((row) => row.id === id))
+    .filter((row): row is BooksPayload["categories"][number] => Boolean(row && toCents(row.purchases) > 0));
   const expenses = books.expenses.filter((row) => toCents(row.total) > 0);
-  const oursFor = (label: string) => centre.rows.find((row) => row.label === label);
   const bankOn =
     toCents(books.bankGiven) > 0 ||
     toCents(books.bankReturned) > 0 ||
     toCents(books.bankHeld) !== 0 ||
     toCents(books.bankDue) > 0;
-  const salesMax = Math.max(...rows.map((row) => toCents(row.sales)), 0);
-  const cashSales = toCents(moneyOf(books, "cash", "sales"));
-  const gpaySales = toCents(moneyOf(books, "gpay", "sales"));
-  const split = cashSales + gpaySales;
+  const gpayWaiting = toCents(books.gpayStill);
 
   return (
     <>
       <article className="rounded-xl border border-line border-t-4 border-t-sign bg-card px-4 py-4">
-        <p className="text-xs font-medium text-muted">For us</p>
+        <p className="text-xs font-medium text-muted">Profit</p>
         <p className={cn("mt-1 font-display text-4xl leading-none tabular-nums", toCents(read.result) < 0 && "text-danger")}>
           {formatInr(read.result)}
         </p>
         {read.compare ? <p className="mt-2 text-sm font-medium">{read.compare}</p> : null}
       </article>
 
-      <section className="grid grid-cols-3 gap-2">
-        <Figure label="Sales" value={books.salesTotal} />
-        <Figure label="Till" value={till} />
-        <Figure label="Bought" value={books.purchaseTotal} />
-      </section>
-      {toCents(books.cashTaken) !== 0 ? (
-        <p className="text-sm">
-          {toCents(books.cashTaken) > 0 ? "Taken from the drawer" : "Put into the drawer"}{" "}
-          {formatInr(centsToAmount(Math.abs(toCents(books.cashTaken))))}
-        </p>
-      ) : null}
+      <Sheet
+        title="Sales"
+        rows={salesRows.map((row) => ({ label: row.label.replace(" sales", ""), value: row.sales }))}
+        total={books.salesTotal}
+      />
+      <Sheet title="Purchase" rows={buyRows.map((row) => ({ label: row.label.replace(" purchases", ""), value: row.purchases }))} total={books.purchaseTotal} />
+      <Sheet title="Expense" rows={expenses.map((row) => ({ label: row.label, value: row.total }))} total={books.expenseTotal} />
 
-      {split > 0 ? (
-        <div>
-          <div className="flex h-3 overflow-hidden rounded-full bg-wash">
-            <div className="h-3 bg-ink" style={{ width: `${Math.round((cashSales / split) * 100)}%` }} />
-            <div className="h-3 bg-sign" style={{ width: `${Math.round((gpaySales / split) * 100)}%` }} />
-          </div>
-          <p className="mt-1 flex justify-between text-xs text-muted">
-            <span>Cash {formatInr(moneyOf(books, "cash", "sales"))}</span>
-            <span>GPay {formatInr(moneyOf(books, "gpay", "sales"))}</span>
-          </p>
-          {gpaySales > toCents(books.gpayReceived) ? (
-            <p className="mt-1 text-sm font-medium">
-              GPay not in the bank yet {formatInr(centsToAmount(gpaySales - toCents(books.gpayReceived)))}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {rows.length > 0 || expenses.length > 0 ? (
-        <section className="space-y-3 rounded-xl border border-line bg-card p-4">
-          {rows.map((row) => {
-            const share = oursFor(row.label);
-            return (
-              <BarRow
-                key={row.id}
-                label={row.label}
-                value={toCents(row.sales) > 0 ? row.sales : row.purchases}
-                max={salesMax || Math.max(...rows.map((item) => toCents(item.purchases)), 1)}
-                aside={
-                  share && toCents(share.ours) > 0
-                    ? `Ours ${formatInr(share.ours)}`
-                    : toCents(row.purchases) > 0 && toCents(row.sales) > 0
-                      ? `Bought ${formatInr(row.purchases)}`
-                      : undefined
-                }
-                soft={toCents(row.sales) === 0}
-              />
-            );
-          })}
-          {expenses.map((row) => (
-            <BarRow key={row.id} label={row.label} value={row.total} max={Math.max(...expenses.map((item) => toCents(item.total)), 1)} soft />
+      <section className="rounded-xl border border-line bg-card">
+        <h3 className="border-b border-line px-4 py-3 font-display text-lg">How the profit is made</h3>
+        <ul>
+          {centre.rows.map((row) => (
+            <li key={row.label} className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+              <span>
+                {row.label.replace(" sales", "")}
+                <span className="text-muted"> {row.rate}</span>
+              </span>
+              <span className="font-semibold tabular-nums">{formatInr(row.ours)}</span>
+            </li>
           ))}
+          {toCents(books.expenseTotal) > 0 ? (
+            <li className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+              <span>Expenses</span>
+              <span className="font-semibold tabular-nums">−{formatInr(books.expenseTotal)}</span>
+            </li>
+          ) : null}
+        </ul>
+        <p className="flex items-baseline justify-between border-t border-line px-4 py-3 font-medium">
+          <span>Profit</span>
+          <span className={cn("tabular-nums", toCents(centre.result) < 0 && "text-danger")}>{formatInr(centre.result)}</span>
+        </p>
+        <div className="px-4 pb-3">
           <RateEditor rates={books.rates} />
-        </section>
-      ) : null}
+        </div>
+      </section>
+
+      <Sheet
+        title="Cash and GPay"
+        rows={[
+          { label: "Cash sales", value: moneyOf(books, "cash", "sales") },
+          { label: "GPay sales", value: moneyOf(books, "gpay", "sales") },
+          { label: "Cash in", value: books.cashIn, hint: "from your pocket, not a sale" },
+          { label: "Cash out", value: books.cashOut, hint: "taken home" },
+          ...(gpayWaiting > 0 ? [{ label: "GPay not in the bank yet", value: books.gpayStill }] : []),
+        ]}
+      />
 
       {bankOn ? (
-        <article className="rounded-xl border border-line bg-card px-4 py-3">
-          <p className="text-xs font-medium text-muted">Still with the bank</p>
-          <p className="mt-1 font-display text-3xl leading-none tabular-nums">{formatInr(books.bankHeld)}</p>
-          <p className="mt-2 text-sm tabular-nums text-muted">
-            Given {formatInr(books.bankGiven)} · Back {formatInr(books.bankReturned)}
-            {toCents(books.bankInterest) > 0 ? ` · Interest ${formatInr(books.bankInterest)}` : ""}
-            {toCents(books.bankDue) > 0 ? ` · Due ${formatInr(books.bankDue)}` : ""}
-          </p>
-        </article>
+        <Sheet
+          title="Bank savings"
+          rows={[
+            { label: "Given to the agent", value: books.bankGiven },
+            { label: "Came back", value: books.bankReturned },
+            { label: "Interest", value: books.bankInterest },
+            { label: "Due back", value: books.bankDue },
+          ]}
+          totalLabel="Still with the bank"
+          total={books.bankHeld}
+        />
       ) : null}
     </>
   );
 }
 
-function BarRow({
-  label,
-  value,
-  max,
-  aside,
-  soft = false,
+function Sheet({
+  title,
+  rows,
+  total,
+  totalLabel = "Total",
 }: {
-  label: string;
-  value: string;
-  max: number;
-  aside?: string;
-  soft?: boolean;
+  title: string;
+  rows: { label: string; value: string; hint?: string }[];
+  total?: string;
+  totalLabel?: string;
 }) {
-  const cents = Math.max(toCents(value), 0);
-  const width = max > 0 && cents > 0 ? Math.max(8, Math.round((cents / max) * 100)) : 0;
+  const shown = rows.filter((row) => toCents(row.value) !== 0);
+  if (shown.length === 0 && (!total || toCents(total) === 0)) return null;
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-sm font-semibold tabular-nums">
-          {formatInr(value)}
-          {aside ? <span className="ml-2 font-normal text-muted">{aside}</span> : null}
+    <section className="rounded-xl border border-line bg-card">
+      <h3 className="border-b border-line px-4 py-3 font-display text-lg">{title}</h3>
+      <ul>
+        {shown.map((row) => (
+          <li key={row.label} className="flex items-baseline justify-between gap-3 px-4 py-2">
+            <span className="text-sm">
+              {row.label}
+              {row.hint ? <span className="text-muted"> · {row.hint}</span> : null}
+            </span>
+            <span className="font-semibold tabular-nums">{formatInr(row.value)}</span>
+          </li>
+        ))}
+      </ul>
+      {total ? (
+        <p className="flex items-baseline justify-between gap-3 border-t border-line px-4 py-3 font-medium">
+          <span>{totalLabel}</span>
+          <span className={cn("tabular-nums", toCents(total) < 0 && "text-danger")}>{formatInr(total)}</span>
         </p>
-      </div>
-      <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-wash">
-        <div className={cn("h-2.5 rounded-full", soft ? "bg-faint" : "bg-ink")} style={{ width: `${Math.min(width, 100)}%` }} />
-      </div>
-    </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -445,15 +435,6 @@ function barWidth(value: string, max: number) {
   const cents = toCents(value);
   if (max <= 0 || cents <= 0) return "0%";
   return `${Math.min(100, Math.max(8, Math.round((cents / max) * 100)))}%`;
-}
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <article className="rounded-xl border border-line bg-card px-3 py-3">
-      <p className="text-xs font-medium text-muted">{label}</p>
-      <p className={cn("mt-1 font-display text-xl leading-none tabular-nums", toCents(value) < 0 && "text-danger")}>{formatInr(value)}</p>
-    </article>
-  );
 }
 
 function moneyOf(books: BooksPayload, payment: "cash" | "gpay", field: "sales" | "purchases" | "expenses") {

@@ -26,7 +26,6 @@ import {
   errorText,
   formatClock,
   formatInr,
-  leftAfter,
   longDate,
   paymentLabel,
   sanitizeAmountInput,
@@ -79,7 +78,6 @@ export function DayLedger({
   const gpay = addAmounts(visible.filter((line) => line.payment === "gpay").map((line) => line.amount));
   const given = addAmounts(bankLines.filter((line) => line.direction === "given").map((line) => line.amount));
   const returned = addAmounts(bankLines.filter((line) => line.direction === "returned").map((line) => line.amount));
-  const net = leftAfter(salesTotal, purchaseTotal, expenseTotal);
   const ours = rates.data ? centreFromLines(lines, rates.data) : null;
   const heading = mode === "sale" ? "Sales" : mode === "purchase" ? "Purchases" : mode === "expense" ? "Expenses" : "Bank";
   const removeGpay = useMutation({
@@ -103,14 +101,13 @@ export function DayLedger({
         <p className="text-sm text-muted">{date === today ? "Today" : longDate(date)}</p>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid grid-cols-3 gap-2">
         <Mini label="Sales" value={query.isPending ? "…" : formatInr(salesTotal)} hot={mode === "sale"} />
         <Mini label="Purchases" value={query.isPending ? "…" : formatInr(purchaseTotal)} hot={mode === "purchase"} />
         <Mini label="Expenses" value={query.isPending ? "…" : formatInr(expenseTotal)} hot={mode === "expense"} />
-        <Mini label="Left" value={query.isPending ? "…" : formatInr(net)} negative={!query.isPending && toCents(net) < 0} />
       </div>
       {showProfit && ours ? (
-        <p className={cn("mt-3 text-sm font-medium", toCents(ours) < 0 && "text-danger")}>For us {formatInr(ours)}</p>
+        <p className={cn("mt-3 text-sm font-medium", toCents(ours) < 0 && "text-danger")}>Profit {formatInr(ours)}</p>
       ) : null}
       {mode !== "bank" ? (
         <p className="mt-2 text-sm text-muted">
@@ -479,7 +476,7 @@ function DrawerTake({
   moves: { id: number; direction: "taken" | "put"; amount: string; note: string | null }[];
 }) {
   const queryClient = useQueryClient();
-  const [direction, setDirection] = useState<"taken" | "put">("taken");
+  const [direction, setDirection] = useState<"taken" | "put">("put");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
@@ -513,13 +510,13 @@ function DrawerTake({
         save.mutate();
       }}
     >
-      <p className="text-sm font-medium">Cash from the drawer</p>
+      <p className="text-sm font-medium">Cash in or cash out</p>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setDirection("taken")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "taken" ? "bg-sign" : "bg-wash")}>
-          Took cash
-        </button>
         <button type="button" onClick={() => setDirection("put")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "put" ? "bg-sign" : "bg-wash")}>
-          Put cash in
+          Cash in
+        </button>
+        <button type="button" onClick={() => setDirection("taken")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "taken" ? "bg-sign" : "bg-wash")}>
+          Cash out
         </button>
       </div>
       <input
@@ -532,7 +529,7 @@ function DrawerTake({
       <input
         value={note}
         maxLength={40}
-        placeholder="Why, if you want"
+        placeholder={direction === "put" ? "From your pocket" : "Taken home"}
         onChange={(event) => setNote(sanitizeSupplier(event.target.value))}
         className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base outline-none"
       />
@@ -545,7 +542,7 @@ function DrawerTake({
           {moves.map((move) => (
             <li key={move.id} className="flex items-center justify-between gap-3 py-2">
               <p className="text-sm">
-                {move.direction === "taken" ? "Took" : "Put in"} {formatInr(move.amount)}
+                {move.direction === "taken" ? "Cash out" : "Cash in"} {formatInr(move.amount)}
                 {move.note ? ` · ${move.note}` : ""}
               </p>
               <button type="button" onClick={() => remove.mutate(move.id)} className="h-11 px-2 text-sm text-muted">

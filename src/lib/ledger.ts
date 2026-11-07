@@ -294,8 +294,11 @@ export type BooksPayload = {
   bankHeld: string;
   bankDue: string;
   gpayReceived: string;
+  gpayStill: string;
   drawerCount: string | null;
   cashTaken: string;
+  cashIn: string;
+  cashOut: string;
   gamingTotal: string;
   gamingCount: number;
   rates: MarginRates;

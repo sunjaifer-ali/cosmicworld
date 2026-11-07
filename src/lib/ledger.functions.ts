@@ -852,20 +852,27 @@ export const getBooks = createServerFn({ method: "GET" })
       from gpay_received
       where entry_date between ${data.from}::date and ${data.to}::date
     `;
+    const gpayOpen = await sql<{ sales: unknown; received: unknown }>`
+      select
+        coalesce((select sum(amount) from sales where payment = 'gpay' and sale_date <= ${data.to}::date), 0)::text as sales,
+        coalesce((select sum(amount) from gpay_received where entry_date <= ${data.to}::date), 0)::text as received
+    `;
+    const gpayStill = centsToAmount(Math.max(0, toCents(asText(gpayOpen[0]?.sales)) - toCents(asText(gpayOpen[0]?.received))));
     const drawer =
       data.from === data.to
         ? await sql<{ amount: unknown }>`
             select amount::text as amount from drawer_counts where count_date = ${data.from}::date
           `
         : [];
-    const taken = await sql<{ total: unknown }>`
-      select (
-        coalesce(sum(amount) filter (where direction = 'taken'), 0)
-        - coalesce(sum(amount) filter (where direction = 'put'), 0)
-      )::text as total
+    const pocket = await sql<{ cash_in: unknown; cash_out: unknown }>`
+      select
+        coalesce(sum(amount) filter (where direction = 'put'), 0)::text as cash_in,
+        coalesce(sum(amount) filter (where direction = 'taken'), 0)::text as cash_out
       from drawer_moves
       where entry_date between ${data.from}::date and ${data.to}::date
     `;
+    const cashIn = asText(pocket[0]?.cash_in);
+    const cashOut = asText(pocket[0]?.cash_out);
     const gamingRows = await sql<{ payment: string; total: unknown; n: unknown }>`
       select payment,
              coalesce(sum(amount), 0)::text as total,
@@ -950,8 +957,11 @@ export const getBooks = createServerFn({ method: "GET" })
       bankHeld: asText(heldBank[0]?.held),
       bankDue: asText(dueBank[0]?.due),
       gpayReceived: asText(gpayIn[0]?.total),
+      gpayStill,
       drawerCount: drawer[0] ? asText(drawer[0].amount) : null,
-      cashTaken: asText(taken[0]?.total),
+      cashTaken: centsToAmount(toCents(cashOut) - toCents(cashIn)),
+      cashIn,
+      cashOut,
       gamingTotal: addAmounts(payments.map((row) => row.gaming)),
       gamingCount: payments.reduce((sum, row) => sum + row.gamingCount, 0),
       rates: await loadRates(),
