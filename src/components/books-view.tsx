@@ -4,7 +4,7 @@ import { eachDayOfInterval, endOfMonth, format, getDay, parseISO, startOfMonth }
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { LineList } from "@/components/day-ledger";
-import { getBooks, listReport, saveRates } from "@/lib/ledger.functions";
+import { getBooks, listReport, listShopDays, saveRates } from "@/lib/ledger.functions";
 import {
   axisLabel,
   basisToPercent,
@@ -20,6 +20,7 @@ import {
   pointLabel,
   sanitizePercentInput,
   shiftAnchor,
+  shopStatus,
   toCents,
   type BooksPayload,
   type Grain,
@@ -198,6 +199,13 @@ export function BooksView({
         </div>
       ) : books ? (
         <div className="mt-4 space-y-4">
+          {quiet && grain === "day" && (books.shop === "holiday" || books.shop === "leave") ? (
+            <div className="rounded-xl border border-dashed border-line bg-card px-4 py-8 text-center">
+              <p className="font-medium">{books.shop === "holiday" ? "Sunday holiday" : "Staff leave"}</p>
+              <p className="mt-1 text-sm text-muted">No sales expected.</p>
+            </div>
+          ) : (
+            <>
           <BookBoard books={books} previous={previous.data ?? null} today={today} grain={grain} />
           {quiet ? (
             <div className="rounded-xl border border-dashed border-line bg-card px-4 py-8 text-center">
@@ -241,6 +249,8 @@ export function BooksView({
                 </div>
               )}
             </section>
+          )}
+            </>
           )}
         </div>
       ) : null}
@@ -371,8 +381,8 @@ function BookBoard({
         rows={[
           { label: "Cash sales", value: moneyOf(books, "cash", "sales") },
           { label: "GPay sales", value: moneyOf(books, "gpay", "sales") },
-          { label: "Cash in", value: books.cashIn, hint: "from your pocket, not a sale" },
-          { label: "Cash out", value: books.cashOut, hint: "taken home" },
+          { label: "Put cash", value: books.cashIn, hint: "from your pocket, not a sale" },
+          { label: "Take cash", value: books.cashOut, hint: "taken home" },
           ...(gpayWaiting > 0 ? [{ label: "GPay not in the bank yet", value: books.gpayStill }] : []),
         ]}
       />
@@ -616,6 +626,15 @@ function BookCalendar({
   const days = eachDayOfInterval({ start: monthDate, end: endOfMonth(monthDate) });
   const lead = (getDay(monthDate) + 6) % 7;
   const nextYearBlocked = `${year + 1}-01-01` > today;
+  const marks = useQuery({
+    queryKey: ["shop-days", format(monthDate, "yyyy-MM-dd"), format(endOfMonth(monthDate), "yyyy-MM-dd")],
+    queryFn: () =>
+      listShopDays({
+        data: { from: format(monthDate, "yyyy-MM-dd"), to: format(endOfMonth(monthDate), "yyyy-MM-dd") },
+      }),
+    enabled: grain !== "year",
+  });
+  const markOf = new Map((marks.data?.days ?? []).map((row) => [row.date, row.kind]));
 
   function moveYear(direction: -1 | 1) {
     const nextYear = year + direction;
@@ -704,6 +723,8 @@ function BookCalendar({
               const iso = format(day, "yyyy-MM-dd");
               const selected = grain === "day" && iso === anchor;
               const disabled = iso > today;
+              const marked = markOf.get(iso);
+              const status = shopStatus(iso, marked === "leave" || marked === "worked" ? marked : null);
               return (
                 <button
                   key={iso}
@@ -716,6 +737,8 @@ function BookCalendar({
                   className={cn(
                     "h-10 rounded-sm text-sm tabular-nums transition-colors duration-150 disabled:opacity-40",
                     selected ? "bg-ink text-paper" : iso === today ? "bg-wash font-semibold" : "bg-paper",
+                    !selected && status === "holiday" && "text-muted",
+                    !selected && status === "leave" && "bg-sign",
                   )}
                 >
                   {format(day, "d")}
@@ -724,7 +747,7 @@ function BookCalendar({
             })}
           </div>
           <p className="mt-3 text-sm text-pretty text-muted">
-            {grain === "day" ? "This day. Tap another day, or a month for the whole month." : "This month. Tap a day to open that day."}
+            Sundays are holidays. A highlighted day is staff leave.
           </p>
         </>
       )}

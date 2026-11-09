@@ -139,6 +139,11 @@ async function readShopBackup(sql: Sql): Promise<BackupFile> {
       from drawer_moves
       order by id
     `;
+    const closed = await sql<{ day: string; kind: string }>`
+      select to_char(day, 'YYYY-MM-DD') as day, kind
+      from shop_days
+      order by day
+    `;
     const found = new Map(rates.map((row) => [row.category, asCount(row.basis)]));
     const basisOf = (key: string, fallback: number) => {
       const value = found.get(key);
@@ -204,6 +209,9 @@ async function readShopBackup(sql: Sql): Promise<BackupFile> {
         note: row.note?.trim() || null,
         createdAt: row.created_at,
       })),
+      closed: closed
+        .filter((row) => row.kind === "leave" || row.kind === "worked")
+        .map((row) => ({ date: row.day, kind: row.kind as "leave" | "worked" })),
       rates: {
         cosmetics: basisOf("cosmetics", 1500),
         fancy: basisOf("fancy", 7000),
@@ -323,6 +331,12 @@ async function applyBooks(sql: Sql, data: BackupFile) {
         );
       }
       await resetSerial(tx, "drawer_moves");
+      if (data.closed) {
+        await tx.query("delete from shop_days");
+        for (const row of data.closed) {
+          await tx.query("insert into shop_days (day, kind) values ($1::date, $2)", [row.date, row.kind]);
+        }
+      }
     });
     await rememberDailyBackup();
     return {

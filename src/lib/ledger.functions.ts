@@ -18,6 +18,8 @@ import {
   EXPENSE_CATEGORIES,
   drawerInput,
   drawerMoveInput,
+  shopDayInput,
+  shopStatus,
   editPurchaseInput,
   editSaleInput,
   expenseInput,
@@ -333,6 +335,10 @@ export const listDay = createServerFn({ method: "GET" })
       where entry_date = ${data.date}::date
       order by created_at desc, id desc
     `;
+    const marked = await sql<{ kind: string }>`
+      select kind from shop_days where day = ${data.date}::date
+    `;
+    const mark = marked[0]?.kind === "leave" || marked[0]?.kind === "worked" ? marked[0].kind : null;
     return {
       lines,
       bank,
@@ -346,6 +352,7 @@ export const listDay = createServerFn({ method: "GET" })
         note: asRemark(row.note),
         enteredAt: row.entered_at,
       })),
+      shop: shopStatus(data.date, mark),
     };
   });
 
@@ -465,6 +472,45 @@ export const removeDrawerMove = createServerFn({ method: "POST" })
     const rows = await sql<{ id: unknown }>`delete from drawer_moves where id = ${data.id} returning id`;
     if (!rows[0]) throw new Error("That row is already gone");
     return { id: asId(rows[0].id) };
+  });
+
+export const setShopDay = createServerFn({ method: "POST" })
+  .validator(shopDayInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    assertRealDate(data.date);
+    const sql = await getSql();
+    if (data.mark === "clear") {
+      await sql`delete from shop_days where day = ${data.date}::date`;
+      return { shop: shopStatus(data.date, null) };
+    }
+    await sql`
+      insert into shop_days (day, kind)
+      values (${data.date}::date, ${data.mark})
+      on conflict (day) do update set kind = excluded.kind
+    `;
+    return { shop: shopStatus(data.date, data.mark) };
+  });
+
+export const listShopDays = createServerFn({ method: "GET" })
+  .validator(booksInput.pick({ from: true, to: true }))
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context));
+    assertRange(data.from, data.to);
+    const sql = await getSql();
+    const rows = await sql<{ day: string; kind: string }>`
+      select to_char(day, 'YYYY-MM-DD') as day, kind
+      from shop_days
+      where day between ${data.from}::date and ${data.to}::date
+      order by day
+    `;
+    return {
+      days: rows
+        .filter((row) => row.kind === "leave" || row.kind === "worked")
+        .map((row) => ({ date: row.day, kind: row.kind as "leave" | "worked" })),
+    };
   });
 
 export const addGpayIn = createServerFn({ method: "POST" })
@@ -873,6 +919,14 @@ export const getBooks = createServerFn({ method: "GET" })
     `;
     const cashIn = asText(pocket[0]?.cash_in);
     const cashOut = asText(pocket[0]?.cash_out);
+    const dayMark =
+      data.from === data.to
+        ? await sql<{ kind: string }>`select kind from shop_days where day = ${data.from}::date`
+        : [];
+    const shop =
+      data.from === data.to
+        ? shopStatus(data.from, dayMark[0]?.kind === "leave" || dayMark[0]?.kind === "worked" ? dayMark[0].kind : null)
+        : null;
     const gamingRows = await sql<{ payment: string; total: unknown; n: unknown }>`
       select payment,
              coalesce(sum(amount), 0)::text as total,
@@ -962,6 +1016,7 @@ export const getBooks = createServerFn({ method: "GET" })
       cashTaken: centsToAmount(toCents(cashOut) - toCents(cashIn)),
       cashIn,
       cashOut,
+      shop,
       gamingTotal: addAmounts(payments.map((row) => row.gaming)),
       gamingCount: payments.reduce((sum, row) => sum + row.gamingCount, 0),
       rates: await loadRates(),

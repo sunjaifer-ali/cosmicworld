@@ -169,6 +169,26 @@ export const drawerMoveInput = z.object({
   note: z.string().trim().max(40).optional(),
 });
 
+export const shopDayInput = z.object({
+  date: dateSchema,
+  mark: z.enum(["leave", "worked", "clear"]),
+});
+
+export function isSunday(iso: string): boolean {
+  const [year, month, day] = iso.split("-").map(Number);
+  if (!year || !month || !day) return false;
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay() === 0;
+}
+
+export type ShopStatus = "holiday" | "leave" | "worked" | "open";
+
+export function shopStatus(iso: string, mark: "leave" | "worked" | null): ShopStatus {
+  if (mark === "leave") return "leave";
+  if (mark === "worked") return "worked";
+  if (isSunday(iso)) return "holiday";
+  return "open";
+}
+
 export const gamingInput = z.object({
   date: dateSchema,
   amount: amountSchema,
@@ -299,6 +319,7 @@ export type BooksPayload = {
   cashTaken: string;
   cashIn: string;
   cashOut: string;
+  shop: ShopStatus | null;
   gamingTotal: string;
   gamingCount: number;
   rates: MarginRates;

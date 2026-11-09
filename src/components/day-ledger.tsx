@@ -13,6 +13,7 @@ import {
   removePurchase,
   removeSale,
   saveDrawer,
+  setShopDay,
 } from "@/lib/ledger.functions";
 import {
   PURCHASE_CATEGORIES,
@@ -26,6 +27,7 @@ import {
   errorText,
   formatClock,
   formatInr,
+  isSunday,
   longDate,
   paymentLabel,
   sanitizeAmountInput,
@@ -108,6 +110,17 @@ export function DayLedger({
       </div>
       {showProfit && ours ? (
         <p className={cn("mt-3 text-sm font-medium", toCents(ours) < 0 && "text-danger")}>Profit {formatInr(ours)}</p>
+      ) : null}
+      {mode === "sale" ? (
+        <ShopDay
+          date={date}
+          status={
+            (query.data?.shop ?? (isSunday(date) ? "holiday" : "open")) === "holiday" &&
+            (toCents(salesTotal) > 0 || toCents(purchaseTotal) > 0 || toCents(expenseTotal) > 0)
+              ? "worked"
+              : (query.data?.shop ?? (isSunday(date) ? "holiday" : "open"))
+          }
+        />
       ) : null}
       {mode !== "bank" ? (
         <p className="mt-2 text-sm text-muted">
@@ -468,6 +481,42 @@ export function LineList({
   );
 }
 
+function ShopDay({ date, status }: { date: string; status: "holiday" | "leave" | "worked" | "open" }) {
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (mark: "leave" | "worked" | "clear") => setShopDay({ data: { date, mark } }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      await queryClient.invalidateQueries({ queryKey: ["shop-days"] });
+    },
+  });
+  const label =
+    status === "leave" ? "Staff leave" : status === "holiday" ? "Sunday holiday" : status === "worked" ? "Opened on Sunday" : "Shop open";
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-card px-3 py-2">
+      <p className="text-sm font-medium">{label}</p>
+      {status === "leave" ? (
+        <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+          Cancel leave
+        </button>
+      ) : status === "worked" ? (
+        <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+          Sunday holiday
+        </button>
+      ) : status === "holiday" ? (
+        <button type="button" disabled={save.isPending} onClick={() => save.mutate("worked")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+          We opened
+        </button>
+      ) : (
+        <button type="button" disabled={save.isPending} onClick={() => save.mutate("leave")} className="h-11 shrink-0 rounded-xl bg-sign px-3 text-sm font-medium">
+          Staff leave
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DrawerTake({
   date,
   moves,
@@ -489,6 +538,7 @@ function DrawerTake({
     onSuccess: async () => {
       setAmount("");
       setNote("");
+      setDirection("put");
       setError("");
       await queryClient.invalidateQueries({ queryKey: ["day"] });
       await queryClient.invalidateQueries({ queryKey: ["books"] });
@@ -510,13 +560,13 @@ function DrawerTake({
         save.mutate();
       }}
     >
-      <p className="text-sm font-medium">Cash in or cash out</p>
+      <p className="text-sm font-medium">Put cash or take cash</p>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setDirection("put")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "put" ? "bg-sign" : "bg-wash")}>
-          Cash in
+          Put cash
         </button>
         <button type="button" onClick={() => setDirection("taken")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "taken" ? "bg-sign" : "bg-wash")}>
-          Cash out
+          Take cash
         </button>
       </div>
       <input
@@ -542,7 +592,7 @@ function DrawerTake({
           {moves.map((move) => (
             <li key={move.id} className="flex items-center justify-between gap-3 py-2">
               <p className="text-sm">
-                {move.direction === "taken" ? "Cash out" : "Cash in"} {formatInr(move.amount)}
+                {move.direction === "taken" ? "Take cash" : "Put cash"} {formatInr(move.amount)}
                 {move.note ? ` · ${move.note}` : ""}
               </p>
               <button type="button" onClick={() => remove.mutate(move.id)} className="h-11 px-2 text-sm text-muted">

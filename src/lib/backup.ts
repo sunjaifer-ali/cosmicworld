@@ -98,6 +98,10 @@ export const backupFileSchema = z
     drawer: z.array(drawerRow).max(5000).optional(),
     gpay: z.array(gpayRow).max(20000).optional(),
     moves: z.array(moveRow).max(20000).optional(),
+    closed: z
+      .array(z.object({ date: day, kind: z.enum(["leave", "worked"]) }))
+      .max(5000)
+      .optional(),
     rates: z.object({
       cosmetics: basis,
       fancy: basis,
