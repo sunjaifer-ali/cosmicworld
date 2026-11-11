@@ -67,6 +67,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState("");
   const [showDate, setShowDate] = useState(false);
+  const [shopName, setShopName] = useState(false);
   const easy = props.easy === true && props.mode !== "expense";
   const categories =
     props.mode === "sale" ? SALE_CATEGORIES : props.mode === "purchase" ? PURCHASE_CATEGORIES : EXPENSE_CATEGORIES;
@@ -142,6 +143,26 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
       }}
     >
       <h2 className="font-display text-xl leading-tight tracking-tight">{easy ? (props.mode === "sale" ? "Sale" : "Purchase") : `New ${verb}`}</h2>
+      {easy ? (
+        <div className="mt-2">
+          {!showDate ? (
+            <button type="button" onClick={() => setShowDate(true)} className="text-sm font-medium text-muted">
+              Today
+            </button>
+          ) : (
+            <input
+              id="bill-date"
+              type="date"
+              aria-label="Date"
+              value={props.date}
+              onChange={(event) => {
+                if (event.target.value) props.onDate(event.target.value);
+              }}
+              className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+            />
+          )}
+        </div>
+      ) : null}
 
       <label className="mt-4 block" htmlFor="bill-amount">
         <span className="mb-2 block text-sm font-medium">{easy ? "How much?" : "Amount"}</span>
@@ -176,6 +197,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
         <div className={cn("flex flex-wrap gap-2", easy && "grid grid-cols-2")} role="radiogroup" aria-label="Category">
           {categories.map((item) => {
             const selected = props.category === item.id;
+            const name = easy && props.mode === "purchase" && item.id === "general" ? "Whole bill" : item.label;
             return (
               <button
                 key={item.id}
@@ -194,14 +216,14 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
                   selected ? "bg-sign text-ink shadow-sm" : "bg-wash text-ink",
                 )}
               >
-                {item.label}
+                {name}
               </button>
             );
           })}
         </div>
       </fieldset>
 
-      {props.mode === "purchase" ? (
+      {props.mode === "purchase" && (!easy || shopName || props.supplier) ? (
         <label className="mt-4 block" htmlFor="purchase-shop">
           <span className="mb-2 block text-sm font-medium">{easy ? "From which shop?" : "Supplier"}</span>
           <input
@@ -217,6 +239,10 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
             className="h-12 w-full rounded-xl border border-line bg-wash px-3 text-base outline-none"
           />
         </label>
+      ) : props.mode === "purchase" && easy ? (
+        <button type="button" onClick={() => setShopName(true)} className="mt-3 h-11 text-sm font-medium text-muted">
+          Add shop name
+        </button>
       ) : null}
 
       {props.mode === "expense" && props.category === "other" ? (
@@ -240,7 +266,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
         </label>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-[1fr_9.5rem] items-end gap-2">
+      <div className={cn("mt-4 items-end gap-2", easy ? "block" : "grid grid-cols-[1fr_9.5rem]")}>
         <fieldset>
           <legend className="mb-2 text-sm font-medium">{easy ? "Cash or GPay?" : props.mode === "sale" ? "Received as" : "Paid as"}</legend>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Payment">
@@ -269,24 +295,20 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
           </div>
         </fieldset>
 
+        {easy ? null : (
         <label className="block" htmlFor="bill-date">
           <span className="mb-2 block text-sm font-medium">Date</span>
-          {easy && !showDate ? (
-            <button type="button" onClick={() => setShowDate(true)} className="h-11 w-full rounded-xl bg-wash text-sm font-medium">
-              Today
-            </button>
-          ) : (
-            <input
-              id="bill-date"
-              type="date"
-              value={props.date}
-              onChange={(event) => {
-                if (event.target.value) props.onDate(event.target.value);
-              }}
-              className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
-            />
-          )}
+          <input
+            id="bill-date"
+            type="date"
+            value={props.date}
+            onChange={(event) => {
+              if (event.target.value) props.onDate(event.target.value);
+            }}
+            className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+          />
         </label>
+        )}
       </div>
 
       {error ? (
@@ -307,7 +329,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
           easy ? "h-14 rounded-2xl text-lg" : "h-12 rounded-xl text-base",
         )}
       >
-        {save.isPending ? "Saving…" : easy ? "Save" : `Save ${verb}`}
+        {save.isPending ? "Saving…" : easy ? (props.mode === "sale" ? "Save sale" : "Save purchase") : `Save ${verb}`}
       </button>
     </form>
   );

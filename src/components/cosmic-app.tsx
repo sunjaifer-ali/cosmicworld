@@ -1,4 +1,4 @@
-import { BadgeIndianRupee, BookOpen, FileText, Landmark, Package, Receipt, Users } from "lucide-react";
+import { BadgeIndianRupee, BookOpen, Calculator, FileText, Landmark, Package, Receipt, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BankForm, GpayInForm } from "@/components/bank-form";
@@ -8,6 +8,7 @@ import { BooksView } from "@/components/books-view";
 import { AdminSetup, BrandMark, GateStatus, SignInDoors, StaffDesk } from "@/components/counter-gate";
 import { DayLedger } from "@/components/day-ledger";
 import { EntryForm } from "@/components/entry-form";
+import { ShopCalculator } from "@/components/shop-calculator";
 import { cn } from "@/lib/cn";
 import { writeCounterToken, type CounterPublic, type CounterState } from "@/lib/counter";
 import { getCounterState, signOutCounter } from "@/lib/counter.functions";
@@ -23,11 +24,12 @@ import {
   type SaleCategory,
 } from "@/lib/ledger";
 
-type Tab = "sale" | "purchase" | "expense" | "bank" | "bill" | "books" | "staff";
+type Tab = "sale" | "purchase" | "calc" | "expense" | "bank" | "bill" | "books" | "staff";
 
-const TABS: { id: Tab; label: string; icon: typeof BookOpen; admin?: boolean }[] = [
+const TABS: { id: Tab; label: string; icon: typeof BookOpen; admin?: boolean; staff?: boolean }[] = [
   { id: "sale", label: "Sale", icon: BadgeIndianRupee },
   { id: "purchase", label: "Purchase", icon: Package },
+  { id: "calc", label: "Calc", icon: Calculator, staff: true },
   { id: "expense", label: "Expense", icon: Receipt },
   { id: "bank", label: "Bank", icon: Landmark },
   { id: "bill", label: "Bill", icon: FileText },
@@ -120,7 +122,7 @@ function Desk({ account }: { account: CounterPublic }) {
   const [draft, setDraft] = useState<Draft>(INITIAL_DRAFT);
   const [signOutError, setSignOutError] = useState("");
   const admin = account.role === "admin";
-  const tabs = TABS.filter((item) => admin || !item.admin);
+  const tabs = TABS.filter((item) => (admin || !item.admin) && (!item.staff || !admin));
 
   useEffect(() => {
     const iso = todayISO();
@@ -227,6 +229,10 @@ function Desk({ account }: { account: CounterPublic }) {
           <div className="mt-3">
             <BillForm today={today} />
           </div>
+        ) : tab === "calc" ? (
+          <div className="mt-3">
+            <ShopCalculator />
+          </div>
         ) : (
           <div className="app-grid mt-3">
             {tab === "bank" ? (
@@ -291,7 +297,7 @@ function Desk({ account }: { account: CounterPublic }) {
               mode={tab === "bank" ? "bank" : tab === "expense" ? "expense" : tab === "purchase" ? "purchase" : "sale"}
               today={today}
               canRemove={admin}
-              canEdit={tab === "sale" || tab === "purchase"}
+              canEdit={admin}
               showProfit={admin}
               compact={!admin}
             />

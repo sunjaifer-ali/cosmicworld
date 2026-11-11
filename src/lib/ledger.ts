@@ -138,6 +138,7 @@ export const purchaseInput = z.object({
 
 export const editSaleInput = z.object({
   id: z.number().int().positive(),
+  date: dateSchema,
   category: saleCategorySchema,
   amount: amountSchema,
   payment: paymentSchema,
@@ -146,6 +147,65 @@ export const editSaleInput = z.object({
 export const editPurchaseInput = editSaleInput.extend({
   category: purchaseCategorySchema,
   supplier: z.string().trim().max(40).optional(),
+});
+
+export const editBankInput = z
+  .object({
+    id: z.number().int().positive(),
+    date: dateSchema,
+    direction: bankDirectionSchema,
+    amount: amountSchema,
+    interest: z
+      .string()
+      .trim()
+      .regex(/^\d{0,7}(\.\d{1,2})?$/, "Enter the interest, like 50 or 0")
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.direction !== "returned") return;
+    const interest = canonicalInterest(value.interest ?? "0");
+    const amount = canonicalAmount(value.amount);
+    if (!interest || !amount) return;
+    if (toCents(interest) > toCents(amount)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Interest cannot be more than the money received",
+        path: ["interest"],
+      });
+    }
+  });
+
+export const editDrawerMoveInput = z.object({
+  id: z.number().int().positive(),
+  date: dateSchema,
+  direction: z.enum(["taken", "put"]),
+  amount: amountSchema,
+  note: z.string().trim().max(40).optional(),
+});
+
+export const editExpenseInput = z
+  .object({
+    id: z.number().int().positive(),
+    date: dateSchema,
+    category: expenseCategorySchema,
+    amount: amountSchema,
+    payment: paymentSchema,
+    remark: z.string().trim().max(80).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.category === "other" && !value.remark?.trim()) {
+      ctx.addIssue({ code: "custom", message: "Add a short remark for Other", path: ["remark"] });
+    }
+  });
+
+export const editGpayInput = z.object({
+  id: z.number().int().positive(),
+  date: dateSchema,
+  amount: amountSchema,
+});
+
+export const clearCountInput = z.object({
+  date: dateSchema,
 });
 
 export const drawerInput = z.object({
@@ -406,6 +466,33 @@ export function bankDueDate(iso: string): string {
   return format(addMonths(parseISO(iso), 6), "d MMMM yyyy");
 }
 
+export function bankDueISO(iso: string): string {
+  return format(addMonths(parseISO(iso), 6), "yyyy-MM-dd");
+}
+
+export function bankStillDue(
+  rows: { direction: "given" | "returned"; amount: string; interest: string; date: string }[],
+  from: string,
+  to: string,
+): string {
+  const lots: { left: number; due: string }[] = [];
+  for (const row of rows) {
+    if (row.direction === "given") {
+      lots.push({ left: toCents(row.amount), due: bankDueISO(row.date) });
+      continue;
+    }
+    let pay = toCents(row.amount) - toCents(row.interest);
+    for (const lot of lots) {
+      if (pay <= 0) break;
+      const take = Math.min(lot.left, pay);
+      lot.left -= take;
+      pay -= take;
+    }
+  }
+  const due = lots.reduce((sum, lot) => (lot.due >= from && lot.due <= to ? sum + lot.left : sum), 0);
+  return centsToAmount(Math.max(0, due));
+}
+
 export function marginRateLabel(id: string, rates: MarginRates): string {
   const basis = rates[id as keyof MarginRates];
   return typeof basis === "number" ? formatRate(basis) : "";
@@ -497,20 +584,6 @@ export function ownerRead(input: {
     );
   } else if (earners[0] && earners.length > 1) {
     notes.push(`${earners[0].label} is carrying the shop, ${formatInr(earners[0].ours)} for us.`);
-  }
-
-  const unsold = books.categories.filter((row) => toCents(row.purchases) > 0 && toCents(row.sales) === 0);
-  if (unsold.length > 0) {
-    const names = unsold.map((row) => row.label).join(", ");
-    notes.push(`${names} ${unsold.length === 1 ? "was" : "were"} bought and did not sell. Check that stock.`);
-  } else {
-    const gap = toCents(books.purchaseTotal) - toCents(books.salesTotal);
-    if (gap >= 100000) notes.push(`Bought ${formatInr(centsToAmount(gap))} more than you sold. That money is in stock.`);
-    else if (toCents(books.salesTotal) - toCents(books.purchaseTotal) >= 200000 && toCents(books.purchaseTotal) > 0) {
-      notes.push(
-        `Sold ${formatInr(centsToAmount(toCents(books.salesTotal) - toCents(books.purchaseTotal)))} more than you bought. Do not let the shelves run out.`,
-      );
-    }
   }
 
   const costs = books.expenses.filter((row) => toCents(row.total) > 0).sort((a, b) => toCents(b.total) - toCents(a.total));

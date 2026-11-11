@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
+  clearCount,
+  editBank,
+  editDrawerMove,
+  editExpense,
+  editGpay,
   editPurchase,
   editSale,
   getRates,
@@ -16,6 +21,8 @@ import {
   setShopDay,
 } from "@/lib/ledger.functions";
 import {
+  BANK_DIRECTIONS,
+  EXPENSE_CATEGORIES,
   PURCHASE_CATEGORIES,
   SALE_CATEGORIES,
   addAmounts,
@@ -82,13 +89,6 @@ export function DayLedger({
   const returned = addAmounts(bankLines.filter((line) => line.direction === "returned").map((line) => line.amount));
   const ours = rates.data ? centreFromLines(lines, rates.data) : null;
   const heading = mode === "sale" ? "Sales" : mode === "purchase" ? "Purchases" : mode === "expense" ? "Expenses" : "Bank";
-  const removeGpay = useMutation({
-    mutationFn: (id: number) => removeGpayIn({ data: { id } }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["day"] });
-      await queryClient.invalidateQueries({ queryKey: ["books"] });
-    },
-  });
   const empty =
     mode === "sale"
       ? "No sales yet. Type the amount and press Save."
@@ -114,6 +114,7 @@ export function DayLedger({
       {mode === "sale" ? (
         <ShopDay
           date={date}
+          canMark={canEdit}
           status={
             (query.data?.shop ?? (isSunday(date) ? "holiday" : "open")) === "holiday" &&
             (toCents(salesTotal) > 0 || toCents(purchaseTotal) > 0 || toCents(expenseTotal) > 0)
@@ -151,39 +152,53 @@ export function DayLedger({
             </button>
           </div>
         ) : mode === "bank" ? (
-          <BankList lines={bankLines} canRemove={canRemove} preview={compact ? 4 : 6} />
+          <BankList lines={bankLines} date={date} canRemove={canRemove} canEdit={canEdit} preview={compact ? 4 : 6} />
         ) : (
-          <LineList lines={visible} canRemove={canRemove} canEdit={canEdit} empty={empty} preview={compact ? 4 : 6} />
+          <LineList lines={visible} date={date} canRemove={canRemove} canEdit={canEdit} empty={empty} preview={compact ? 4 : 6} />
         )}
       </div>
-      {mode === "sale" ? (
-        <DrawerTake
-          date={date}
-          moves={(query.data?.moves ?? []).map((move) => ({
-            id: move.id,
-            direction: move.direction === "put" ? "put" : "taken",
-            amount: move.amount,
-            note: move.note,
-          }))}
-        />
-      ) : null}
-      {mode === "sale" ? (
-        <DrawerCount date={date} counted={query.data?.counted ?? null} expected={query.data?.expected ?? null} />
+      {mode === "sale" && compact ? (
+        <details className="mt-4 rounded-xl border border-line bg-card px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">Cash drawer</summary>
+          <DrawerTake
+            date={date}
+            canEdit={canEdit}
+            moves={(query.data?.moves ?? []).map((move) => ({
+              id: move.id,
+              direction: move.direction === "put" ? "put" : "taken",
+              amount: move.amount,
+              note: move.note,
+            }))}
+          />
+          <DrawerCount
+            date={date}
+            canEdit={canEdit}
+            counted={query.data?.counted ?? null}
+            expected={query.data?.expected ?? null}
+          />
+        </details>
+      ) : mode === "sale" ? (
+        <>
+          <DrawerTake
+            date={date}
+            canEdit={canEdit}
+            moves={(query.data?.moves ?? []).map((move) => ({
+              id: move.id,
+              direction: move.direction === "put" ? "put" : "taken",
+              amount: move.amount,
+              note: move.note,
+            }))}
+          />
+          <DrawerCount
+            date={date}
+            canEdit={canEdit}
+            counted={query.data?.counted ?? null}
+            expected={query.data?.expected ?? null}
+          />
+        </>
       ) : null}
       {mode === "bank" && (query.data?.gpay?.length ?? 0) > 0 ? (
-        <ul className="mt-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-card">
-          {query.data?.gpay?.map((row) => (
-            <li key={row.id} className="flex items-center justify-between gap-3 px-4 py-2">
-              <p className="text-sm">GPay to bank</p>
-              <p className="font-semibold tabular-nums">{formatInr(row.amount)}</p>
-              {canRemove ? (
-                <button type="button" onClick={() => removeGpay.mutate(row.id)} className="h-11 px-3 text-sm text-muted">
-                  Remove
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <GpayList rows={query.data?.gpay ?? []} date={date} canEdit={canEdit} />
       ) : null}
       <p className="sr-only" role="status">
         {query.isPending ? "Loading the book" : `${mode === "bank" ? bankLines.length : visible.length} entries`}
@@ -192,9 +207,130 @@ export function DayLedger({
   );
 }
 
-function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove: boolean; preview?: number }) {
+function GpayList({
+  rows,
+  date,
+  canEdit,
+}: {
+  rows: { id: number; amount: string }[];
+  date: string;
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [editId, setEditId] = useState<number | null>(null);
+  const [amount, setAmount] = useState("");
+  const [editDate, setEditDate] = useState(date);
+  const [error, setError] = useState("");
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["day"] });
+    await queryClient.invalidateQueries({ queryKey: ["books"] });
+  };
+  const edit = useMutation({
+    mutationFn: (id: number) => {
+      const next = canonicalAmount(amount);
+      if (!next) throw new Error("Enter the amount");
+      return editGpay({ data: { id, date: editDate, amount: next } });
+    },
+    onSuccess: async () => {
+      setEditId(null);
+      setError("");
+      await refresh();
+    },
+    onError: (cause) => setError(errorText(cause, "Could not change that row.")),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => removeGpayIn({ data: { id } }),
+    onSuccess: refresh,
+    onError: (cause) => setError(errorText(cause, "Could not remove that row.")),
+  });
+  return (
+    <ul className="mt-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-card">
+      {rows.map((row) => (
+        <li key={row.id} className="px-4 py-2">
+          {editId === row.id ? (
+            <div>
+              <input
+                type="date"
+                value={editDate}
+                aria-label="Date"
+                onChange={(event) => {
+                  if (event.target.value) setEditDate(event.target.value);
+                }}
+                className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+              />
+              <input
+                inputMode="decimal"
+                value={amount}
+                aria-label="Amount"
+                onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
+                className="mt-2 h-12 w-full rounded-xl border border-line bg-wash px-3 text-xl tabular-nums outline-none"
+              />
+              <div className="mt-2 flex gap-2">
+                <button type="button" onClick={() => setEditId(null)} className="h-11 flex-1 rounded-xl bg-wash text-sm font-medium">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={edit.isPending}
+                  onClick={() => edit.mutate(row.id)}
+                  className="h-11 flex-1 rounded-xl bg-ink text-sm font-medium text-paper disabled:opacity-50"
+                >
+                  {edit.isPending ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm">GPay to bank</p>
+              <p className="font-semibold tabular-nums">{formatInr(row.amount)}</p>
+              {canEdit ? (
+                <div className="flex shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError("");
+                      setEditId(row.id);
+                      setEditDate(date);
+                      setAmount(row.amount.replace(/\.00$/, ""));
+                    }}
+                    className="h-11 px-2 text-sm font-medium"
+                  >
+                    Change
+                  </button>
+                  <button type="button" onClick={() => remove.mutate(row.id)} className="h-11 px-2 text-sm text-muted">
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </li>
+      ))}
+      {error ? <li className="px-4 py-3 text-sm text-danger">{error}</li> : null}
+    </ul>
+  );
+}
+
+function BankList({
+  lines,
+  date,
+  canRemove,
+  canEdit = false,
+  preview,
+}: {
+  lines: BankLine[];
+  date: string;
+  canRemove: boolean;
+  canEdit?: boolean;
+  preview?: number;
+}) {
   const queryClient = useQueryClient();
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [amount, setAmount] = useState("");
+  const [interest, setInterest] = useState("");
+  const [direction, setDirection] = useState<"given" | "returned">("returned");
+  const [editDate, setEditDate] = useState(date);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const shown = preview && !expanded ? lines.slice(0, preview) : lines;
@@ -207,6 +343,28 @@ function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove:
       await queryClient.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (cause) => setError(errorText(cause, "Could not remove that row.")),
+  });
+  const edit = useMutation({
+    mutationFn: (id: number) => {
+      const next = canonicalAmount(amount);
+      if (!next) throw new Error("Enter the amount");
+      return editBank({
+        data: {
+          id,
+          date: editDate,
+          direction,
+          amount: next,
+          interest: direction === "returned" ? interest || "0" : undefined,
+        },
+      });
+    },
+    onSuccess: async () => {
+      setEditId(null);
+      setError("");
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    },
+    onError: (cause) => setError(errorText(cause, "Could not change that row.")),
   });
   if (lines.length === 0) {
     return (
@@ -233,6 +391,60 @@ function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove:
                 Remove
               </button>
             </div>
+          ) : editId === line.id ? (
+            <div>
+              <div className="grid grid-cols-2 gap-2">
+                {BANK_DIRECTIONS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setDirection(item.id)}
+                    className={cn("h-11 rounded-xl text-sm font-medium", direction === item.id ? "bg-sign" : "bg-wash")}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="date"
+                value={editDate}
+                aria-label="Date"
+                onChange={(event) => {
+                  if (event.target.value) setEditDate(event.target.value);
+                }}
+                className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+              />
+              <input
+                inputMode="decimal"
+                value={amount}
+                aria-label="Amount"
+                onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
+                className="mt-2 h-12 w-full rounded-xl border border-line bg-wash px-3 text-xl tabular-nums outline-none"
+              />
+              {direction === "returned" ? (
+                <input
+                  inputMode="decimal"
+                  value={interest}
+                  aria-label="Interest"
+                  placeholder="Interest, if any"
+                  onChange={(event) => setInterest(sanitizeAmountInput(event.target.value))}
+                  className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base tabular-nums outline-none"
+                />
+              ) : null}
+              <div className="mt-2 flex gap-2">
+                <button type="button" onClick={() => setEditId(null)} className="h-11 flex-1 rounded-xl bg-wash text-sm font-medium">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={edit.isPending}
+                  onClick={() => edit.mutate(line.id)}
+                  className="h-11 flex-1 rounded-xl bg-ink text-sm font-medium text-paper disabled:opacity-50"
+                >
+                  {edit.isPending ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
@@ -243,8 +455,25 @@ function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove:
                 </p>
               </div>
               <p className="font-semibold tabular-nums">{formatInr(line.amount)}</p>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError("");
+                    setConfirmId(null);
+                    setEditId(line.id);
+                    setDirection(line.direction);
+                    setEditDate(date);
+                    setAmount(line.amount.replace(/\.00$/, ""));
+                    setInterest(line.interest.replace(/\.00$/, ""));
+                  }}
+                  className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium"
+                >
+                  Change
+                </button>
+              ) : null}
               {canRemove ? (
-                <button type="button" onClick={() => setConfirmId(line.id)} className="h-11 px-3 text-sm text-muted">
+                <button type="button" onClick={() => { setEditId(null); setConfirmId(line.id); }} className="h-11 px-3 text-sm text-muted">
                   Remove
                 </button>
               ) : null}
@@ -252,6 +481,7 @@ function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove:
           )}
         </li>
       ))}
+      {error ? <li className="px-4 py-3 text-sm text-danger">{error}</li> : null}
       {preview && lines.length > preview ? (
         <li>
           <button type="button" onClick={() => setExpanded((value) => !value)} className="h-11 w-full text-sm font-medium text-muted">
@@ -259,19 +489,20 @@ function BankList({ lines, canRemove, preview }: { lines: BankLine[]; canRemove:
           </button>
         </li>
       ) : null}
-      {error ? <li className="px-4 py-3 text-sm text-danger">{error}</li> : null}
     </ul>
   );
 }
 
 export function LineList({
   lines,
+  date,
   empty,
   canRemove,
   canEdit = false,
   preview,
 }: {
   lines: LedgerLine[];
+  date: string;
   empty: string;
   canRemove: boolean;
   canEdit?: boolean;
@@ -284,6 +515,7 @@ export function LineList({
   const [payment, setPayment] = useState<Payment>("cash");
   const [category, setCategory] = useState("");
   const [supplier, setSupplier] = useState("");
+  const [editDate, setEditDate] = useState(date);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const shown = preview && !expanded ? lines.slice(0, preview) : lines;
@@ -305,12 +537,28 @@ export function LineList({
     mutationFn: async (line: LedgerLine) => {
       const next = canonicalAmount(amount);
       if (!next) throw new Error("Enter the amount");
+      if (!editDate) throw new Error("Choose the date");
+      if (line.kind === "expense") {
+        const picked = EXPENSE_CATEGORIES.find((item) => item.id === category);
+        if (!picked) throw new Error("Choose the expense");
+        return editExpense({
+          data: {
+            id: line.id,
+            date: editDate,
+            category: picked.id,
+            amount: next,
+            payment,
+            remark: supplier.trim() || undefined,
+          },
+        });
+      }
       if (line.kind === "purchase") {
         const picked = PURCHASE_CATEGORIES.find((item) => item.id === category);
         if (!picked) throw new Error("Choose what was bought");
         return editPurchase({
           data: {
             id: line.id,
+            date: editDate,
             category: picked.id,
             amount: next,
             payment,
@@ -321,7 +569,7 @@ export function LineList({
       const picked = SALE_CATEGORIES.find((item) => item.id === category);
       if (!picked) throw new Error("Choose what sold");
       return editSale({
-        data: { id: line.id, category: picked.id, amount: next, payment },
+        data: { id: line.id, date: editDate, category: picked.id, amount: next, payment },
       });
     },
     onSuccess: async () => {
@@ -345,7 +593,8 @@ export function LineList({
     <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-card">
       {shown.map((line) => {
         const key = `${line.kind}:${line.id}`;
-        const choices = line.kind === "purchase" ? PURCHASE_CATEGORIES : SALE_CATEGORIES;
+        const choices =
+          line.kind === "purchase" ? PURCHASE_CATEGORIES : line.kind === "expense" ? EXPENSE_CATEGORIES : SALE_CATEGORIES;
         return (
           <li key={key} className="px-4 py-2">
             {confirmKey === key ? (
@@ -370,11 +619,20 @@ export function LineList({
             ) : editKey === key ? (
               <div>
                 <input
+                  type="date"
+                  value={editDate}
+                  aria-label="Date"
+                  onChange={(event) => {
+                    if (event.target.value) setEditDate(event.target.value);
+                  }}
+                  className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+                />
+                <input
                   inputMode="decimal"
                   value={amount}
                   aria-label="Amount"
                   onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
-                  className="h-12 w-full rounded-xl border border-line bg-wash px-3 text-xl tabular-nums outline-none"
+                  className="mt-2 h-12 w-full rounded-xl border border-line bg-wash px-3 text-xl tabular-nums outline-none"
                 />
                 <div className="mt-2 flex flex-wrap gap-2">
                   {choices.map((item) => (
@@ -396,11 +654,11 @@ export function LineList({
                     GPay
                   </button>
                 </div>
-                {line.kind === "purchase" ? (
+                {line.kind === "purchase" || line.kind === "expense" ? (
                   <input
                     value={supplier}
-                    maxLength={40}
-                    placeholder="Shop name"
+                    maxLength={line.kind === "expense" ? 80 : 40}
+                    placeholder={line.kind === "expense" ? "Remark, if Other" : "Shop name"}
                     onChange={(event) => setSupplier(sanitizeSupplier(event.target.value))}
                     className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base outline-none"
                   />
@@ -430,13 +688,14 @@ export function LineList({
                   </p>
                 </div>
                 <p className="text-base font-semibold tabular-nums">{formatInr(line.amount)}</p>
-                {canEdit && (line.kind === "sale" || line.kind === "purchase") ? (
+                {canEdit && (line.kind === "sale" || line.kind === "purchase" || line.kind === "expense") ? (
                   <button
                     type="button"
                     onClick={() => {
                       setError("");
                       setConfirmKey(null);
                       setEditKey(key);
+                      setEditDate(date);
                       setAmount(line.amount.replace(/\.00$/, ""));
                       setPayment(line.payment);
                       setCategory(line.category);
@@ -481,7 +740,15 @@ export function LineList({
   );
 }
 
-function ShopDay({ date, status }: { date: string; status: "holiday" | "leave" | "worked" | "open" }) {
+function ShopDay({
+  date,
+  status,
+  canMark,
+}: {
+  date: string;
+  status: "holiday" | "leave" | "worked" | "open";
+  canMark: boolean;
+}) {
   const queryClient = useQueryClient();
   const save = useMutation({
     mutationFn: (mark: "leave" | "worked" | "clear") => setShopDay({ data: { date, mark } }),
@@ -491,37 +758,42 @@ function ShopDay({ date, status }: { date: string; status: "holiday" | "leave" |
       await queryClient.invalidateQueries({ queryKey: ["shop-days"] });
     },
   });
+  if (!canMark && status === "open") return null;
   const label =
     status === "leave" ? "Staff leave" : status === "holiday" ? "Sunday holiday" : status === "worked" ? "Opened on Sunday" : "Shop open";
   return (
     <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-card px-3 py-2">
       <p className="text-sm font-medium">{label}</p>
-      {status === "leave" ? (
-        <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
-          Cancel leave
-        </button>
-      ) : status === "worked" ? (
-        <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
-          Sunday holiday
-        </button>
-      ) : status === "holiday" ? (
-        <button type="button" disabled={save.isPending} onClick={() => save.mutate("worked")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
-          We opened
-        </button>
-      ) : (
-        <button type="button" disabled={save.isPending} onClick={() => save.mutate("leave")} className="h-11 shrink-0 rounded-xl bg-sign px-3 text-sm font-medium">
-          Staff leave
-        </button>
-      )}
+      {canMark ? (
+        status === "leave" ? (
+          <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+            Cancel leave
+          </button>
+        ) : status === "worked" ? (
+          <button type="button" disabled={save.isPending} onClick={() => save.mutate("clear")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+            Sunday holiday
+          </button>
+        ) : status === "holiday" ? (
+          <button type="button" disabled={save.isPending} onClick={() => save.mutate("worked")} className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium">
+            We opened
+          </button>
+        ) : (
+          <button type="button" disabled={save.isPending} onClick={() => save.mutate("leave")} className="h-11 shrink-0 rounded-xl bg-sign px-3 text-sm font-medium">
+            Staff leave
+          </button>
+        )
+      ) : null}
     </div>
   );
 }
 
 function DrawerTake({
   date,
+  canEdit = false,
   moves,
 }: {
   date: string;
+  canEdit?: boolean;
   moves: { id: number; direction: "taken" | "put"; amount: string; note: string | null }[];
 }) {
   const queryClient = useQueryClient();
@@ -529,6 +801,10 @@ function DrawerTake({
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editDirection, setEditDirection] = useState<"taken" | "put">("put");
+  const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState(date);
   const save = useMutation({
     mutationFn: () => {
       const next = canonicalAmount(amount);
@@ -544,6 +820,20 @@ function DrawerTake({
       await queryClient.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (cause) => setError(errorText(cause, "Could not save that.")),
+  });
+  const change = useMutation({
+    mutationFn: (id: number) => {
+      const next = canonicalAmount(editAmount);
+      if (!next) throw new Error("Enter the amount");
+      return editDrawerMove({ data: { id, date: editDate, direction: editDirection, amount: next } });
+    },
+    onSuccess: async () => {
+      setEditId(null);
+      setError("");
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    },
+    onError: (cause) => setError(errorText(cause, "Could not change that row.")),
   });
   const remove = useMutation({
     mutationFn: (id: number) => removeDrawerMove({ data: { id } }),
@@ -590,14 +880,70 @@ function DrawerTake({
       {moves.length > 0 ? (
         <ul className="mt-3 divide-y divide-line">
           {moves.map((move) => (
-            <li key={move.id} className="flex items-center justify-between gap-3 py-2">
-              <p className="text-sm">
-                {move.direction === "taken" ? "Take cash" : "Put cash"} {formatInr(move.amount)}
-                {move.note ? ` · ${move.note}` : ""}
-              </p>
-              <button type="button" onClick={() => remove.mutate(move.id)} className="h-11 px-2 text-sm text-muted">
-                Remove
-              </button>
+            <li key={move.id} className="py-2">
+              {editId === move.id ? (
+                <div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setEditDirection("put")} className={cn("h-11 rounded-xl text-sm font-medium", editDirection === "put" ? "bg-sign" : "bg-wash")}>
+                      Put cash
+                    </button>
+                    <button type="button" onClick={() => setEditDirection("taken")} className={cn("h-11 rounded-xl text-sm font-medium", editDirection === "taken" ? "bg-sign" : "bg-wash")}>
+                      Take cash
+                    </button>
+                  </div>
+                  <input
+                    type="date"
+                    value={editDate}
+                    aria-label="Date"
+                    onChange={(event) => {
+                      if (event.target.value) setEditDate(event.target.value);
+                    }}
+                    className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+                  />
+                  <input
+                    inputMode="decimal"
+                    value={editAmount}
+                    onChange={(event) => setEditAmount(sanitizeAmountInput(event.target.value))}
+                    className="mt-2 h-12 w-full rounded-xl border border-line bg-wash px-3 text-xl tabular-nums outline-none"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" onClick={() => setEditId(null)} className="h-11 flex-1 rounded-xl bg-wash text-sm font-medium">
+                      Cancel
+                    </button>
+                    <button type="button" disabled={change.isPending} onClick={() => change.mutate(move.id)} className="h-11 flex-1 rounded-xl bg-ink text-sm font-medium text-paper disabled:opacity-50">
+                      {change.isPending ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm">
+                    {move.direction === "taken" ? "Take cash" : "Put cash"} {formatInr(move.amount)}
+                    {move.note ? ` · ${move.note}` : ""}
+                  </p>
+                  <div className="flex shrink-0">
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditId(move.id);
+                          setEditDate(date);
+                          setEditDirection(move.direction);
+                          setEditAmount(move.amount.replace(/\.00$/, ""));
+                        }}
+                        className="h-11 px-2 text-sm font-medium"
+                      >
+                        Change
+                      </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button type="button" onClick={() => remove.mutate(move.id)} className="h-11 px-2 text-sm text-muted">
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -606,10 +952,21 @@ function DrawerTake({
   );
 }
 
-function DrawerCount({ date, counted, expected }: { date: string; counted: string | null; expected: string | null }) {
+function DrawerCount({
+  date,
+  canEdit = false,
+  counted,
+  expected,
+}: {
+  date: string;
+  canEdit?: boolean;
+  counted: string | null;
+  expected: string | null;
+}) {
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState("");
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
   const save = useMutation({
     mutationFn: () => {
       const next = canonicalCount(amount);
@@ -618,46 +975,100 @@ function DrawerCount({ date, counted, expected }: { date: string; counted: strin
     },
     onSuccess: async () => {
       setAmount("");
+      setEditing(false);
       setError("");
       await queryClient.invalidateQueries({ queryKey: ["day"] });
       await queryClient.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (cause) => setError(errorText(cause, "Could not save the count.")),
   });
+  const undo = useMutation({
+    mutationFn: () => clearCount({ data: { date } }),
+    onSuccess: async () => {
+      setEditing(false);
+      setAmount("");
+      setError("");
+      await queryClient.invalidateQueries({ queryKey: ["day"] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+    },
+    onError: (cause) => setError(errorText(cause, "Could not undo the count.")),
+  });
   const gap = counted == null || expected == null ? null : toCents(counted) - toCents(expected);
+  const open = counted == null || editing;
   return (
     <form
       className="mt-4 rounded-xl border border-line bg-card p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        save.mutate();
+        if (open) save.mutate();
       }}
     >
-      <p className="text-sm font-medium">Count the cash</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium">Count the cash</p>
+        {counted != null && canEdit && !editing ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setAmount(counted.replace(/\.00$/, ""));
+                setEditing(true);
+              }}
+              className="h-11 shrink-0 rounded-xl bg-wash px-3 text-sm font-medium"
+            >
+              Change
+            </button>
+            <button
+              type="button"
+              disabled={undo.isPending}
+              onClick={() => undo.mutate()}
+              className="h-11 shrink-0 rounded-xl px-3 text-sm font-medium text-muted"
+            >
+              Undo
+            </button>
+          </div>
+        ) : null}
+      </div>
       <p className={cn("mt-1 text-sm", gap != null && gap < 0 && "text-danger")}>
-        {expected == null
-          ? counted == null
+        {counted != null && !editing
+          ? `Counted ${formatInr(counted)}`
+          : expected == null
             ? "First count. This is the cash you have now."
-            : `Saved ${formatInr(counted)}. Next counts compare with this.`
-          : gap == null
-            ? `Should be ${formatInr(expected)}`
-            : gap === 0
-              ? "Matches."
-              : gap < 0
-                ? `Short ${formatInr(centsToAmount(-gap))}`
-                : `Extra ${formatInr(centsToAmount(gap))}`}
+            : `Should be ${formatInr(expected)}`}
+        {editing || counted == null
+          ? ""
+          : expected == null
+            ? ""
+            : gap == null
+              ? ""
+              : gap === 0
+                ? " · Matches."
+                : gap < 0
+                  ? ` · Short ${formatInr(centsToAmount(-gap))}`
+                  : ` · Extra ${formatInr(centsToAmount(gap))}`}
       </p>
-      <input
-        inputMode="decimal"
-        value={amount}
-        placeholder="Cash in hand"
-        onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
-        className="mt-3 h-14 w-full rounded-xl border border-line bg-wash px-3 text-2xl tabular-nums outline-none"
-      />
-      {error ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
-      <button type="submit" disabled={save.isPending} className="mt-3 h-12 w-full rounded-xl bg-ink text-base font-semibold text-paper disabled:opacity-50">
-        {save.isPending ? "Saving…" : "Save count"}
-      </button>
+      {open ? (
+        <>
+          <input
+            inputMode="decimal"
+            value={amount}
+            placeholder="Cash in hand"
+            onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
+            className="mt-3 h-14 w-full rounded-xl border border-line bg-wash px-3 text-2xl tabular-nums outline-none"
+          />
+          {error ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
+          <div className="mt-3 flex gap-2">
+            {editing ? (
+              <button type="button" onClick={() => setEditing(false)} className="h-12 flex-1 rounded-xl bg-wash text-base font-medium">
+                Cancel
+              </button>
+            ) : null}
+            <button type="submit" disabled={save.isPending} className="h-12 flex-1 rounded-xl bg-ink text-base font-semibold text-paper disabled:opacity-50">
+              {save.isPending ? "Saving…" : "Save count"}
+            </button>
+          </div>
+        </>
+      ) : null}
     </form>
   );
 }

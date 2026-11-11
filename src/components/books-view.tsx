@@ -224,9 +224,7 @@ export function BooksView({
               </div>
               {grain !== "day" ? (
                 <PeriodList
-                  points={books.series.filter(
-                    (point) => toCents(point.sales) > 0 || toCents(point.purchases) > 0 || toCents(point.expenses) > 0,
-                  )}
+                  points={books.series.filter((point) => (grain === "year" ? point.bucket <= today.slice(0, 7) : point.bucket <= today))}
                   grain={grain}
                   expanded={showAllPoints}
                   onToggle={() => setShowAllPoints((open) => !open)}
@@ -242,7 +240,7 @@ export function BooksView({
                 />
               ) : (
                 <div className="mt-4">
-                  <LineList lines={books.lines} canRemove={false} empty="No rows on this day." preview={6} />
+                  <LineList lines={books.lines} date={anchor} canRemove canEdit empty="No rows on this day." preview={6} />
                   <button type="button" onClick={() => onEnterDay(anchor)} className="no-print mt-3 h-11 rounded-sm bg-ink px-4 text-sm font-medium text-paper">
                     Enter on this day
                   </button>
@@ -271,7 +269,9 @@ function PeriodList({
   onToggle: () => void;
   onOpen: (bucket: string) => void;
 }) {
-  const shown = expanded ? points : points.slice(0, 6);
+  const ordered = [...points].sort((a, b) => (a.bucket < b.bucket ? 1 : a.bucket > b.bucket ? -1 : 0));
+  const preview = grain === "year" ? 4 : 7;
+  const shown = expanded ? ordered : ordered.slice(0, preview);
   const maxPoint = Math.max(...points.map((point) => toCents(point.sales)), 0);
   if (points.length === 0) return null;
   return (
@@ -290,10 +290,10 @@ function PeriodList({
           </button>
         </li>
       ))}
-      {points.length > 6 ? (
+      {points.length > preview ? (
         <li>
           <button type="button" onClick={onToggle} className="h-11 w-full text-sm font-medium text-muted">
-            {expanded ? "Show latest" : `Show all ${points.length}`}
+            {expanded ? "Hide old dates" : "Show old dates"}
           </button>
         </li>
       ) : null}
@@ -393,7 +393,7 @@ function BookBoard({
           rows={[
             { label: "Given to the agent", value: books.bankGiven },
             { label: "Came back", value: books.bankReturned },
-            { label: "Interest", value: books.bankInterest },
+            { label: "Interest, already inside came back", value: books.bankInterest },
             { label: "Due back", value: books.bankDue },
           ]}
           totalLabel="Still with the bank"

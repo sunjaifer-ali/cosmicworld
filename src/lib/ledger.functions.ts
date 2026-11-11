@@ -5,6 +5,7 @@ import { counterMiddleware } from "@/lib/counter-middleware";
 import {
   addAmounts,
   bankDueDate,
+  bankStillDue,
   bankInput,
   booksInput,
   buildSeries,
@@ -22,6 +23,11 @@ import {
   shopStatus,
   editPurchaseInput,
   editSaleInput,
+  editBankInput,
+  editDrawerMoveInput,
+  editExpenseInput,
+  editGpayInput,
+  clearCountInput,
   expenseInput,
   gamingInput,
   gpayInInput,
@@ -395,13 +401,14 @@ export const editSale = createServerFn({ method: "POST" })
   .validator(editSaleInput)
   .middleware([counterMiddleware])
   .handler(async ({ data, context }) => {
-    requireCounter(accountFromContext(context));
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
     const amount = canonicalAmount(data.amount);
     if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
     const sql = await getSql();
     const rows = await sql<{ id: unknown }>`
       update sales
-      set category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}
+      set sale_date = ${data.date}::date, category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}
       where id = ${data.id}
       returning id
     `;
@@ -413,19 +420,115 @@ export const editPurchase = createServerFn({ method: "POST" })
   .validator(editPurchaseInput)
   .middleware([counterMiddleware])
   .handler(async ({ data, context }) => {
-    requireCounter(accountFromContext(context));
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
     const amount = canonicalAmount(data.amount);
     if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
     const supplier = data.supplier?.trim() || null;
     const sql = await getSql();
     const rows = await sql<{ id: unknown }>`
       update purchases
-      set category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}, supplier = ${supplier}
+      set purchase_date = ${data.date}::date, category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}, supplier = ${supplier}
       where id = ${data.id}
       returning id
     `;
     if (!rows[0]) throw new Error("That purchase is already gone");
     return { id: asId(rows[0].id) };
+  });
+
+export const editBank = createServerFn({ method: "POST" })
+  .validator(editBankInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const interest = data.direction === "returned" ? canonicalInterest(data.interest ?? "0") : "0.00";
+    if (!interest) throw new Error("Enter the interest, like 50 or 0");
+    if (data.direction === "returned" && toCents(interest) > toCents(amount)) {
+      throw new Error("Interest cannot be more than the money received");
+    }
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update bank_savings
+      set entry_date = ${data.date}::date, direction = ${data.direction}, amount = ${amount}::numeric, interest = ${interest}::numeric
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That bank row is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const editDrawerMove = createServerFn({ method: "POST" })
+  .validator(editDrawerMoveInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const note = data.note?.trim() || null;
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update drawer_moves
+      set entry_date = ${data.date}::date, direction = ${data.direction}, amount = ${amount}::numeric, note = ${note}
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That cash row is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const editExpense = createServerFn({ method: "POST" })
+  .validator(editExpenseInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const remark = data.category === "other" ? data.remark?.trim() || null : null;
+    if (data.category === "other" && !remark) throw new Error("Add a short remark for Other");
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update expenses
+      set expense_date = ${data.date}::date, category = ${data.category}, amount = ${amount}::numeric, payment = ${data.payment}, remark = ${remark}
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That expense is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const editGpay = createServerFn({ method: "POST" })
+  .validator(editGpayInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
+    const amount = canonicalAmount(data.amount);
+    if (!amount) throw new Error("Enter the amount, like 250 or 250.50");
+    const sql = await getSql();
+    const rows = await sql<{ id: unknown }>`
+      update gpay_received
+      set entry_date = ${data.date}::date, amount = ${amount}::numeric
+      where id = ${data.id}
+      returning id
+    `;
+    if (!rows[0]) throw new Error("That GPay row is already gone");
+    return { id: asId(rows[0].id) };
+  });
+
+export const clearCount = createServerFn({ method: "POST" })
+  .validator(clearCountInput)
+  .middleware([counterMiddleware])
+  .handler(async ({ data, context }) => {
+    requireCounter(accountFromContext(context), true);
+    assertRealDate(data.date);
+    const sql = await getSql();
+    await sql`delete from drawer_counts where count_date = ${data.date}::date`;
+    return { cleared: true };
   });
 
 export const saveDrawer = createServerFn({ method: "POST" })
@@ -436,7 +539,14 @@ export const saveDrawer = createServerFn({ method: "POST" })
     assertRealDate(data.date);
     const amount = canonicalCount(data.amount);
     if (!amount) throw new Error("Enter the cash you counted, like 250 or 0");
+    const account = requireCounter(accountFromContext(context));
     const sql = await getSql();
+    const existing = await sql<{ count_date: string }>`
+      select to_char(count_date, 'YYYY-MM-DD') as count_date
+      from drawer_counts
+      where count_date = ${data.date}::date
+    `;
+    if (existing[0] && account.role !== "admin") throw new Error("Only the admin can change a saved count");
     await sql`
       insert into drawer_counts (count_date, amount)
       values (${data.date}::date, ${amount}::numeric)
@@ -467,7 +577,7 @@ export const removeDrawerMove = createServerFn({ method: "POST" })
   .validator(removeInput)
   .middleware([counterMiddleware])
   .handler(async ({ data, context }) => {
-    requireCounter(accountFromContext(context));
+    requireCounter(accountFromContext(context), true);
     const sql = await getSql();
     const rows = await sql<{ id: unknown }>`delete from drawer_moves where id = ${data.id} returning id`;
     if (!rows[0]) throw new Error("That row is already gone");
@@ -478,7 +588,7 @@ export const setShopDay = createServerFn({ method: "POST" })
   .validator(shopDayInput)
   .middleware([counterMiddleware])
   .handler(async ({ data, context }) => {
-    requireCounter(accountFromContext(context));
+    requireCounter(accountFromContext(context), true);
     assertRealDate(data.date);
     const sql = await getSql();
     if (data.mark === "clear") {
@@ -887,12 +997,23 @@ export const getBooks = createServerFn({ method: "GET" })
       )::text as held
       from bank_savings
     `;
-    const dueBank = await sql<{ due: unknown }>`
-      select coalesce(sum(amount), 0)::text as due
+    const dueRows = await sql<{ direction: string; amount: unknown; interest: unknown; entry_date: string }>`
+      select direction, amount::text as amount, interest::text as interest, to_char(entry_date, 'YYYY-MM-DD') as entry_date
       from bank_savings
-      where direction = 'given'
-        and (entry_date + interval '6 months')::date between ${data.from}::date and ${data.to}::date
+      order by entry_date, id
     `;
+    const bankDue = bankStillDue(
+      dueRows
+        .filter((row) => row.direction === "given" || row.direction === "returned")
+        .map((row) => ({
+          direction: row.direction === "returned" ? ("returned" as const) : ("given" as const),
+          amount: asText(row.amount),
+          interest: asText(row.interest),
+          date: row.entry_date,
+        })),
+      data.from,
+      data.to,
+    );
     const gpayIn = await sql<{ total: unknown }>`
       select coalesce(sum(amount), 0)::text as total
       from gpay_received
@@ -1009,7 +1130,7 @@ export const getBooks = createServerFn({ method: "GET" })
       bankReturned: asText(periodBank[0]?.returned),
       bankInterest: asText(periodBank[0]?.interest),
       bankHeld: asText(heldBank[0]?.held),
-      bankDue: asText(dueBank[0]?.due),
+      bankDue,
       gpayReceived: asText(gpayIn[0]?.total),
       gpayStill,
       drawerCount: drawer[0] ? asText(drawer[0].amount) : null,
