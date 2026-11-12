@@ -69,6 +69,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
   const [showDate, setShowDate] = useState(false);
   const [shopName, setShopName] = useState(false);
   const easy = props.easy === true && props.mode !== "expense";
+  const tight = easy && props.mode === "sale";
   const categories =
     props.mode === "sale" ? SALE_CATEGORIES : props.mode === "purchase" ? PURCHASE_CATEGORIES : EXPENSE_CATEGORIES;
   const verb = props.mode === "sale" ? "sale" : props.mode === "purchase" ? "purchase" : "expense";
@@ -135,39 +136,38 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
 
   return (
     <form
-      className="overflow-hidden rounded-xl border border-line border-t-4 border-t-sign bg-card p-4"
+      className={cn("overflow-hidden rounded-xl border border-line border-t-4 border-t-sign bg-card", tight ? "p-3" : "p-4")}
       onSubmit={(event) => {
         event.preventDefault();
         setReceipt("");
         save.mutate();
       }}
     >
-      <h2 className="font-display text-xl leading-tight tracking-tight">{easy ? (props.mode === "sale" ? "Sale" : "Purchase") : `New ${verb}`}</h2>
-      {easy ? (
-        <div className="mt-2">
-          {!showDate ? (
-            <button type="button" onClick={() => setShowDate(true)} className="text-sm font-medium text-muted">
-              Today
-            </button>
-          ) : (
-            <input
-              id="bill-date"
-              type="date"
-              aria-label="Date"
-              value={props.date}
-              onChange={(event) => {
-                if (event.target.value) props.onDate(event.target.value);
-              }}
-              className="h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
-            />
-          )}
-        </div>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="font-display text-xl leading-tight tracking-tight">{easy ? (props.mode === "sale" ? "Sale" : "Purchase") : `New ${verb}`}</h2>
+        {easy && !showDate ? (
+          <button type="button" onClick={() => setShowDate(true)} className="text-sm font-medium text-muted">
+            Today
+          </button>
+        ) : null}
+      </div>
+      {easy && showDate ? (
+        <input
+          id="bill-date"
+          type="date"
+          aria-label="Date"
+          value={props.date}
+          onChange={(event) => {
+            if (event.target.value) props.onDate(event.target.value);
+          }}
+          className="mt-2 h-11 w-full rounded-xl border border-line bg-wash px-3 text-base"
+        />
       ) : null}
 
-      <label className="mt-4 block" htmlFor="bill-amount">
-        <span className="mb-2 block text-sm font-medium">{easy ? "How much?" : "Amount"}</span>
-        <span className={cn("flex items-center gap-2 border border-line bg-wash px-4 focus-within:border-ink", easy ? "h-20 rounded-2xl" : "h-16 rounded-xl")}>
-          <span className="font-display text-3xl text-muted" aria-hidden="true">
+      <label className={cn("block", tight ? "mt-3" : "mt-4")} htmlFor="bill-amount">
+        <span className="mb-1.5 block text-sm font-medium">{easy ? "How much?" : "Amount"}</span>
+        <span className={cn("flex items-center gap-2 border border-line bg-wash px-4 focus-within:border-ink", tight ? "h-16 rounded-xl" : easy ? "h-20 rounded-2xl" : "h-16 rounded-xl")}>
+          <span className={cn("font-display text-muted", tight ? "text-2xl" : "text-3xl")} aria-hidden="true">
             ₹
           </span>
           <input
@@ -185,13 +185,13 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
               setReceipt("");
               props.onAmount(sanitizeAmountInput(event.target.value));
             }}
-            className={cn("h-full w-full bg-transparent font-display leading-none tabular-nums outline-none", easy ? "text-4xl" : "text-3xl")}
+            className={cn("h-full w-full bg-transparent font-display leading-none tabular-nums outline-none", tight ? "text-3xl" : easy ? "text-4xl" : "text-3xl")}
           />
         </span>
       </label>
 
-      <fieldset className="mt-4">
-        <legend className="mb-2 text-sm font-medium">
+      <fieldset className={tight ? "mt-3" : "mt-4"}>
+        <legend className="mb-1.5 text-sm font-medium">
           {easy ? (props.mode === "sale" ? "What sold?" : "What did you buy?") : "Category"}
         </legend>
         <div className={cn("flex flex-wrap gap-2", easy && "grid grid-cols-2")} role="radiogroup" aria-label="Category">
@@ -211,7 +211,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
                   else props.onCategory(item.id as ExpenseCategory);
                 }}
                 className={cn(
-                  easy ? "h-14 rounded-xl text-base" : "h-10 rounded-full px-3.5 text-sm",
+                  tight ? "h-12 rounded-xl text-base" : easy ? "h-14 rounded-xl text-base" : "h-10 rounded-full px-3.5 text-sm",
                   "font-medium transition-colors duration-150",
                   selected ? "bg-sign text-ink shadow-sm" : "bg-wash text-ink",
                 )}
@@ -266,7 +266,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
         </label>
       ) : null}
 
-      <div className={cn("mt-4 items-end gap-2", easy ? "block" : "grid grid-cols-[1fr_9.5rem]")}>
+      <div className={cn("items-end gap-2", tight ? "mt-3" : "mt-4", easy ? "block" : "grid grid-cols-[1fr_9.5rem]")}>
         <fieldset>
           <legend className="mb-2 text-sm font-medium">{easy ? "Cash or GPay?" : props.mode === "sale" ? "Received as" : "Paid as"}</legend>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Payment">
@@ -283,7 +283,7 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
                     props.onPayment(item.id);
                   }}
                   className={cn(
-                    easy ? "h-14 rounded-xl text-base" : "h-11 rounded-full text-sm",
+                    tight ? "h-12 rounded-xl text-base" : easy ? "h-14 rounded-xl text-base" : "h-11 rounded-full text-sm",
                     "font-medium transition-colors duration-150",
                     selected ? "bg-sign text-ink shadow-sm" : "bg-wash text-ink",
                   )}
@@ -325,8 +325,8 @@ export function EntryForm(props: (SaleDraft | PurchaseDraft | ExpenseDraft) & { 
         type="submit"
         disabled={save.isPending}
         className={cn(
-          "mt-4 w-full bg-ink font-semibold text-paper shadow-[0_8px_20px_rgba(74,39,64,0.18)] transition-opacity duration-150 disabled:opacity-50",
-          easy ? "h-14 rounded-2xl text-lg" : "h-12 rounded-xl text-base",
+          "mt-3 w-full bg-ink font-semibold text-paper shadow-[0_8px_20px_rgba(74,39,64,0.18)] transition-opacity duration-150 disabled:opacity-50",
+          tight ? "h-12 rounded-xl text-base" : easy ? "h-14 rounded-2xl text-lg" : "h-12 rounded-xl text-base",
         )}
       >
         {save.isPending ? "Saving…" : easy ? (props.mode === "sale" ? "Save sale" : "Save purchase") : `Save ${verb}`}

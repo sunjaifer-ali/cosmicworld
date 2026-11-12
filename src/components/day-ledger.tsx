@@ -136,6 +136,27 @@ export function DayLedger({
         </p>
       ) : null}
 
+      {mode === "sale" ? (
+        <>
+          <DrawerTake
+            date={date}
+            canEdit={canEdit}
+            moves={(query.data?.moves ?? []).map((move) => ({
+              id: move.id,
+              direction: move.direction === "put" ? "put" : "taken",
+              amount: move.amount,
+              note: move.note,
+            }))}
+          />
+          <DrawerCount
+            date={date}
+            canEdit={canEdit}
+            counted={query.data?.counted ?? null}
+            expected={query.data?.expected ?? null}
+          />
+        </>
+      ) : null}
+
       <div className="mt-4">
         {query.isPending ? (
           <div className="space-y-2" aria-hidden="true">
@@ -157,46 +178,6 @@ export function DayLedger({
           <LineList lines={visible} date={date} canRemove={canRemove} canEdit={canEdit} empty={empty} preview={compact ? 4 : 6} />
         )}
       </div>
-      {mode === "sale" && compact ? (
-        <details className="mt-4 rounded-xl border border-line bg-card px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium">Cash drawer</summary>
-          <DrawerTake
-            date={date}
-            canEdit={canEdit}
-            moves={(query.data?.moves ?? []).map((move) => ({
-              id: move.id,
-              direction: move.direction === "put" ? "put" : "taken",
-              amount: move.amount,
-              note: move.note,
-            }))}
-          />
-          <DrawerCount
-            date={date}
-            canEdit={canEdit}
-            counted={query.data?.counted ?? null}
-            expected={query.data?.expected ?? null}
-          />
-        </details>
-      ) : mode === "sale" ? (
-        <>
-          <DrawerTake
-            date={date}
-            canEdit={canEdit}
-            moves={(query.data?.moves ?? []).map((move) => ({
-              id: move.id,
-              direction: move.direction === "put" ? "put" : "taken",
-              amount: move.amount,
-              note: move.note,
-            }))}
-          />
-          <DrawerCount
-            date={date}
-            canEdit={canEdit}
-            counted={query.data?.counted ?? null}
-            expected={query.data?.expected ?? null}
-          />
-        </>
-      ) : null}
       {mode === "bank" && (query.data?.gpay?.length ?? 0) > 0 ? (
         <GpayList rows={query.data?.gpay ?? []} date={date} canEdit={canEdit} />
       ) : null}
@@ -485,7 +466,7 @@ function BankList({
       {preview && lines.length > preview ? (
         <li>
           <button type="button" onClick={() => setExpanded((value) => !value)} className="h-11 w-full text-sm font-medium text-muted">
-            {expanded ? "Show latest" : `Show all ${lines.length}`}
+            {expanded ? "Hide older" : "Show older"}
           </button>
         </li>
       ) : null}
@@ -727,7 +708,7 @@ export function LineList({
       {preview && lines.length > preview ? (
         <li>
           <button type="button" onClick={() => setExpanded((open) => !open)} className="h-11 w-full text-sm font-medium text-muted">
-            {expanded ? "Show latest" : `Show all ${lines.length}`}
+            {expanded ? "Hide older" : "Show older"}
           </button>
         </li>
       ) : null}
@@ -850,7 +831,8 @@ function DrawerTake({
         save.mutate();
       }}
     >
-      <p className="text-sm font-medium">Put cash or take cash</p>
+      <p className="text-sm font-medium">Cash drawer</p>
+      <p className="mt-1 text-sm text-muted">{direction === "put" ? "Money from your pocket." : "Money taken home."}</p>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setDirection("put")} className={cn("h-11 rounded-xl text-sm font-medium", direction === "put" ? "bg-sign" : "bg-wash")}>
           Put cash
